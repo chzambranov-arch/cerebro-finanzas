@@ -48,7 +48,7 @@ def get_commitments(
     """
     user = current_user
     
-    return db.query(Commitment).filter(Commitment.user_id == user.id).order_by(Commitment.status.desc(), Commitment.due_date.asc()).all()
+    return db.query(Commitment).filter(Commitment.user_id == user.id).order_by(Commitment.status.desc(), Commitment.id.desc()).all()
 
 @router.post("/", response_model=CommitmentOut)
 def create_commitment(

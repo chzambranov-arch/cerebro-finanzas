@@ -5,10 +5,10 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.models.models import User
 from app.deps import get_current_user
-from app.models.finance import Expense
-from datetime import date
+from app.models.finance import Expense, Commitment
+from datetime import date, datetime
 from app.services.ai_service import process_finance_message
-from app.services.sheets_service import sync_expense_to_sheet, add_category_to_sheet
+from app.services.sheets_service import sync_expense_to_sheet, add_category_to_sheet, sync_commitment_to_sheet, delete_commitment_from_sheet
 from app.services.db_service import add_category_to_db, get_dashboard_data_from_db
 
 router = APIRouter(tags=["agent"])
@@ -122,6 +122,76 @@ def chat_with_agent(
     # C. CONSULTAR/CONVERSAR
     elif intent == "TALK":
         return ChatResponse(message=data["response_text"], action_taken=False, intent="TALK")
+
+    # D. CREAR COMPROMISO
+    elif intent == "CREATE_COMMITMENT":
+        try:
+            new_comm = Commitment(
+                user_id=current_user.id,
+                title=data["concept"],
+                type=data.get("commitment_type", "DEBT"), # DEBT or LOAN
+                total_amount=int(data["amount"]),
+                paid_amount=0,
+                status="PENDING",
+                created_at=datetime.utcnow()
+            )
+            db.add(new_comm)
+            db.commit()
+            db.refresh(new_comm)
+            
+            # Sync a Sheets
+            background_tasks.add_task(sync_commitment_to_sheet, new_comm, current_user.tecnico_nombre)
+            
+            return ChatResponse(message=data["response_text"], action_taken=True, intent="CREATE_COMMITMENT")
+        except Exception as e:
+            print(f"Error Agent Commitment: {e}")
+            return ChatResponse(message="Entendí que es un compromiso, pero falló el registro.")
+
+    # E. BORRAR COMPROMISO
+    elif intent == "DELETE_COMMITMENT":
+        target_id = data.get("target_id")
+        if not target_id:
+            return ChatResponse(message="¿Cuál compromiso quieres borrar? No logré identificarlo.", intent="DELETE_COMMITMENT")
+        
+        comm = db.query(Commitment).filter(Commitment.id == target_id, Commitment.user_id == current_user.id).first()
+        if not comm:
+            return ChatResponse(message="No encontré ese compromiso en mis registros.", intent="DELETE_COMMITMENT")
+        
+        # Guardar ID para sync
+        comm_id = comm.id
+        db.delete(comm)
+        db.commit()
+        
+        # Sync Delete
+        background_tasks.add_task(delete_commitment_from_sheet, comm_id)
+        
+        return ChatResponse(message=data["response_text"], action_taken=True, intent="DELETE_COMMITMENT")
+
+    # F. MARCAR COMPROMISO COMO PAGADO
+    elif intent == "MARK_PAID_COMMITMENT":
+        raw_id = data.get("target_id")
+        try:
+            target_id = int(raw_id)
+        except:
+            target_id = None
+            
+        if not target_id:
+            return ChatResponse(message="¿Cuál compromiso quieres marcar como pagado? No logré identificar el ID.", intent="MARK_PAID_COMMITMENT")
+        
+        comm = db.query(Commitment).filter(Commitment.id == target_id, Commitment.user_id == current_user.id).first()
+        if not comm:
+            return ChatResponse(message=f"No encontré el compromiso con ID {target_id}.", intent="MARK_PAID_COMMITMENT")
+        
+        # Marcar como pagado
+        comm.status = "PAID"
+        comm.paid_amount = comm.total_amount
+        db.commit()
+        db.refresh(comm)
+        
+        # Sync a Sheets (Update)
+        background_tasks.add_task(sync_commitment_to_sheet, comm, current_user.tecnico_nombre)
+        
+        return ChatResponse(message=data["response_text"], action_taken=True, intent="MARK_PAID_COMMITMENT")
 
     # D. CREAR GASTO (Por defecto)
     else:

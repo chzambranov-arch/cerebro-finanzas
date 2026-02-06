@@ -4,7 +4,7 @@ import json
 import google.generativeai as genai
 from sqlalchemy.orm import Session
 from app.models.budget import Category
-from app.models.finance import Expense
+from app.models.finance import Expense, Commitment
 from app.models.models import User
 
 def process_finance_message(db: Session, user_id: int, message: str):
@@ -14,16 +14,21 @@ def process_finance_message(db: Session, user_id: int, message: str):
     openai_key = os.getenv("OPENAI_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY")
 
-    # 1. Preparar Contexto común
+    # 1. Preparar Contexto común (Categorías y Gastos)
     categories = db.query(Category).filter(Category.user_id == user_id).all()
-    # Presentar de forma clara: Sección -> Categoría
     cat_context = "\n".join([f"- [{c.section}] -> {c.name}" for c in categories])
     
     recent_expenses = db.query(Expense).filter(Expense.user_id == user_id).order_by(Expense.id.desc()).limit(15).all()
-    expense_context_list = []
-    for e in recent_expenses:
-        expense_context_list.append(f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}")
+    expense_context_list = [f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}" for e in recent_expenses]
     expense_context = "\n".join(expense_context_list)
+    
+    # 2. Compromisos (Debo / Me Deben)
+    commitments = db.query(Commitment).filter(Commitment.user_id == user_id).order_by(Commitment.id.desc()).limit(10).all()
+    comm_context_list = []
+    for c in commitments:
+        c_type = "DEBO" if c.type == 'DEBT' else "ME DEBEN"
+        comm_context_list.append(f" - ID: {c.id} | {c_type} | ${c.total_amount} | {c.title} | Estado: {c.status}")
+    comm_context = "\n".join(comm_context_list)
 
     from datetime import datetime
     hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -35,28 +40,32 @@ def process_finance_message(db: Session, user_id: int, message: str):
     GASTOS RECIENTES:
     {expense_context}
 
+    COMPROMISOS (DEUDAS/PRÉSTAMOS):
+    {comm_context}
+
     JERARQUÍA DE CATEGORÍAS (Usa exactamente estos nombres):
     {cat_context}
 
     REGLAS DE ORO:
-    - SIEMPRE usa 'CREATE' para mensajes como "Agrega X", "Gasto X en Y", o simplemente "X en Y".
-    - NUNCA sumes montos. Si el usuario dice "Agrega 2000", el amount es 2000. Punto.
-    - 'target_id' (CRÍTICO para UPDATE/DELETE):
-        * Si dice "el último", usa el ID del primer gasto de la lista de 'GASTOS RECIENTES'.
-        * Si menciona un concepto o monto, busca el ID que mejor coincida en esa lista.
-        * SIEMPRE debe ser el ID numérico.
-    - 'section': Nombre sin corchetes (ej: 'CASA').
-    - 'category': Nombre sin flechas (ej: 'Arriendo').
-    - 'UPDATE' solo si dice explícitamente "Corrije", "Edita" o "Cambia" (ej: "no eran 1500, eran 2000").
+    - SIEMPRE usa 'CREATE' para gastos normales.
+    - USA 'CREATE_COMMITMENT' si el usuario dice "Debo X a...", "X me debe...", "Le presté X a...".
+    - USA 'MARK_PAID_COMMITMENT' si el usuario dice "Ya pagué X", "Me pagaron lo de Y", "Marca como pagado el compromiso Z". (Esto no lo borra, solo le pone el ticket verde).
+    - USA 'DELETE_COMMITMENT' solo si el usuario pide explícitamente BORRAR o ELIMINAR el registro.
+    - 'target_id': ID numérico para UPDATE/DELETE (Gasto) o DELETE_COMMITMENT/MARK_PAID_COMMITMENT (Compromiso).
+    - 'commitment_type': 'DEBT' (si yo debo) o 'LOAN' (si me deben).
+    - NUNCA sumes montos.
+    - 'section'/'category': Solo para gastos (CREATE).
+    - 'UPDATE' solo si pide explícitamente corregir un gasto existente.
 
     JSON FORMAT:
     {{
-        "intent": "CREATE | UPDATE | DELETE | TALK",
+    "intent": "CREATE | UPDATE | DELETE | CREATE_COMMITMENT | MARK_PAID_COMMITMENT | DELETE_COMMITMENT | TALK",
         "target_id": ID_O_NUMERICO,
-        "amount": monto_final_sin_sumar_nada,
-        "concept": "Nombre limpio",
-        "category": "Nombre_exacto_limpio",
-        "section": "Seccion_exacta_limpio",
+        "amount": monto_final,
+        "concept": "Referencia o Nombre Persona",
+        "category": "Nombre_exacto (solo gastos)",
+        "section": "Seccion_exacta (solo gastos)",
+        "commitment_type": "DEBT | LOAN",
         "payment_method": "metodo",
         "response_text": "Respuesta corta"
     }}

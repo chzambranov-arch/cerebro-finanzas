@@ -1,7 +1,7 @@
-/* A.I. Button & Chat Styles */
 .fab-ai {
-    bottom: 160px; /* Above normal FAB */
-    background: #3b82f6; /* Blue for AI */
+    bottom: 90px;
+    background: #3b82f6;
+    /* Blue for AI */
     box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
 }
 
@@ -14,7 +14,8 @@
     bottom: 0;
     background: rgba(0, 0, 0, 0.5);
     z-index: 2000;
-    align-items: flex-end; /* Slide up from bottom */
+    align-items: flex-end;
+    /* Slide up from bottom */
 }
 
 .chat-overlay.active {
@@ -51,7 +52,8 @@
     border-radius: 50px;
     object-fit: cover;
     border: 2px solid #3b82f6;
-    background: #e0f2fe; /* Fallback color */
+    background: #e0f2fe;
+    /* Fallback color */
 }
 
 .chat-info h3 {
@@ -104,7 +106,7 @@
     border-radius: 18px;
     font-size: 0.95rem;
     line-height: 1.4;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .message.bot .bubble {
@@ -132,7 +134,8 @@
     display: flex;
     gap: 10px;
     background: white;
-    padding-bottom: 30px; /* Safe area */
+    padding-bottom: 30px;
+    /* Safe area */
 }
 
 #chat-input {

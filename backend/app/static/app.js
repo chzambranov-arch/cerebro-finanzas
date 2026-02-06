@@ -106,13 +106,18 @@ class FinanceApp {
 
             // FAB Context Logic
             const fab = document.getElementById('fab-add');
+            if (fab) {
+                if (viewId === 'compromisos') {
+                    fab.querySelector('.label').textContent = 'Nuevo Compromiso';
+                    fab.querySelector('.icon').textContent = '🤝';
+                } else {
+                    fab.querySelector('.label').textContent = 'Agregar Gasto';
+                    fab.querySelector('.icon').textContent = '+';
+                }
+            }
+
             if (viewId === 'compromisos') {
-                fab.querySelector('.label').textContent = 'Nuevo Compromiso';
-                fab.querySelector('.icon').textContent = '🤝';
                 this.loadCompromisos();
-            } else {
-                fab.querySelector('.label').textContent = 'Agregar Gasto';
-                fab.querySelector('.icon').textContent = '+';
             }
 
             if (viewId === 'stats') {
