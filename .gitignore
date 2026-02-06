@@ -1,0 +1,23 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv/
+
+# Secrets (Google Cloud & OAuth)
+backend/gmail_credentials.json
+backend/gmail_token.json
+backend/actividades-diarias-*.json
+*.json
+!backend/app/static/manifest.json
+!package.json
+
+# OS
+.DS_Store
+Thumbs.db

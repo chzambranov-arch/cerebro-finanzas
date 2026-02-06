@@ -1,0 +1,28 @@
+import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    PROJECT_NAME: str = "Cerebro Patio App"
+    API_V1_STR: str = "/api/v1"
+    SECRET_KEY: str = "super_secret_key_change_me_in_prod"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
+    
+    # Database - Using unique name to avoid conflict with Railway's default DATABASE_URL
+    # Will use PostgreSQL in production (Railway) or SQLite locally
+    FINANCE_DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
+
+    # Google Sheets - Finance App
+    GOOGLE_SHEETS_CREDENTIALS_JSON: str = ""
+    GOOGLE_SHEET_ID: str = "19eXI3AV-S5uzXfwxC9HoGa6FExZ4ZlvmCvK79fbwMts"
+
+    # Email (SMTP)
+    SMTP_SERVER: str = "smtp.gmail.com"
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASS: str = ""
+    SMTP_TO: str = ""
+
+    model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
+
+settings = Settings()

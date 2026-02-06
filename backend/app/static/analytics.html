@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cerebro Analytics Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --sidebar-width: 260px;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --accent: #38bdf8;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: #020617;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #1e293b;
+        }
+
+        .brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 40px;
+        }
+
+        .nav-link {
+            padding: 12px 16px;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .date-filter {
+            background: var(--bg-card);
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            color: white;
+            font-family: inherit;
+        }
+
+        /* KPI Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            padding: 20px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--accent);
+            opacity: 0.5;
+        }
+
+        .kpi-label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .kpi-value {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .kpi-trend {
+            font-size: 0.8rem;
+            color: #4ade80;
+            margin-top: 5px;
+            display: block;
+        }
+
+        .kpi-trend.negative {
+            color: #f87171;
+        }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            height: 350px;
+            position: relative;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        h3 {
+            margin: 0;
+            font-weight: 500;
+            font-size: 1.1rem;
+        }
+
+        /* Table */
+        .table-container {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            color: var(--text-muted);
+            padding: 10px;
+            border-bottom: 1px solid #334155;
+        }
+
+        td {
+            padding: 12px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .user-avatar {
+            width: 35px;
+            height: 35px;
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+
+    <aside class="sidebar">
+        <div class="brand">
+            <img src="icon-512.png" width="30" style="border-radius: 6px;">
+            Cerebro Analytics
+        </div>
+        <nav>
+            <a href="#" class="nav-link active" onclick="switchView('overview')">📊 Overview</a>
+            <a href="#" class="nav-link" onclick="switchView('trends')">📈 Tendencias</a>
+            <a href="#" class="nav-link" onclick="switchView('categories')">🍰 Categorías</a>
+            <a href="/" class="nav-link" style="margin-top: auto; border-top: 1px solid #334155;">📱 Volver a App</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 style="margin: 0;">Dashboard Financiero</h1>
+                <p style="color: var(--text-muted); margin: 5px 0 0 0;">Bienvenido de nuevo, <span
+                        id="user-name">Usuario</span></p>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button class="date-filter" onclick="loadData('month')">Este Mes</button>
+                <button class="date-filter" onclick="loadData('all')">Histórico</button>
+            </div>
+        </div>
+
+        <!-- KPI Grid -->
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <span class="kpi-label">Gasto Total</span>
+                <span class="kpi-value" id="kpi-total">$0</span>
+                <span class="kpi-trend" id="kpi-budget">Presupuesto: $0</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Disponible</span>
+                <span class="kpi-value" id="kpi-balance">$0</span>
+                <span class="kpi-trend" id="kpi-saving-rate">0% Ahorro</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Transacciones</span>
+                <span class="kpi-value" id="kpi-count">0</span>
+                <span class="kpi-trend">items procesados</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Ticket Promedio</span>
+                <span class="kpi-value" id="kpi-avg">$0</span>
+                <span class="kpi-trend">por compra</span>
+            </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3>Evolución Diaria</h3>
+                </div>
+                <div style="height: 280px; position:relative;">
+                    <canvas id="chart-daily"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3>Top Secciones</h3>
+                </div>
+                <div style="height: 280px; position:relative; display:flex; justify-content:center;">
+                    <canvas id="chart-sections"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Table -->
+        <h3>Últimas Transacciones</h3>
+        <div class="table-container">
+            <table id="tx-table">
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Concepto</th>
+                        <th>Categoría</th>
+                        <th>Método</th>
+                        <th>Monto</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- JS Injected -->
+                </tbody>
+            </table>
+        </div>
+
+    </main>
+
+    <script src="/static/analytics.js"></script>
+</body>
+
+</html>

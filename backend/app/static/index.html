@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Finanzas - Cerebro</title>
+    <link rel="stylesheet" href="/static/style.css?v=3.0.28">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="icon-512.png">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* CRITICAL: Force Login Overlay to cover everything */
+        #login-overlay.active {
+            display: flex !important;
+            position: fixed !important;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-light, #f8fafc);
+            z-index: 9999 !important;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* CRITICAL: Force Hide when not active */
+        #login-overlay:not(.active) {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+
+        /* REMOVED: body.body-modal-open #app { display: none !important; } - This was hiding normal modals! */
+    </style>
+</head>
+
+<body>
+    <div id="login-overlay" class="login-overlay active">
+        <div class="login-box">
+            <div class="login-header">
+                <img src="icon-512.png" alt="Cerebro Logo" class="login-logo"
+                    style="width: 60px; height: 60px; margin: 0 auto 20px auto; display: block; border-radius: 12px;">
+                <h2>Finanzas Cerebro</h2>
+                <p>Ingresa para gestionar tus activos <small style="display:block; opacity: 0.5;">v3.0.41</small></p>
+            </div>
+            <form id="login-form">
+                <div class="input-group">
+                    <label>E-mail</label>
+                    <input type="email" id="login-email" placeholder="tu@cerebro.com" required>
+                </div>
+                <div class="input-group">
+                    <label>Contraseña</label>
+                    <input type="password" id="login-password" placeholder="••••••" required>
+                </div>
+                <div class="remember-group">
+                    <input type="checkbox" id="login-remember">
+                    <label for="login-remember">Recordar contraseña</label>
+                </div>
+                <div id="login-error" class="error-text"></div>
+                <button type="button" class="btn-submit" id="btn-login"
+                    onclick="financeApp.handleLogin()">Entrar</button>
+                <p class="login-footer">¿No puedes entrar? Contacta a Soporte Antigravity</p>
+            </form>
+        </div>
+    </div>
+
+    <div id="app">
+        <!-- Dashboard View (Inicio) -->
+        <section id="view-inicio" class="view">
+            <header class="dashboard-header">
+                <div class="user-greeting">
+                    <span id="greeting-text">Hola, Christian 👋</span>
+                </div>
+                <div class="balance-section">
+                    <p class="label">Saldo disponible</p>
+                    <h1 id="available-balance">$0</h1>
+                    <p class="monthly-budget">Presupuesto mensual: <span id="total-budget">$0</span></p>
+                    <p class="last-update">Actualizado: <span id="sync-time">-</span></p>
+                </div>
+            </header>
+
+            <main class="dashboard-main">
+                <div class="categories-grid" id="categories-container">
+                    <!-- Dynamic Category Cards -->
+                    <div class="category-card skeleton"></div>
+                    <div class="category-card skeleton"></div>
+                    <div class="category-card skeleton"></div>
+                    <div class="category-card skeleton"></div>
+                </div>
+
+                <div class="recent-section">
+                    <div class="section-header">
+                        <h3>Gastos recientes</h3>
+                    </div>
+                    <div id="expense-list" class="expense-list">
+                        <!-- Items dynamically loaded -->
+                    </div>
+                </div>
+            </main>
+        </section>
+
+        <!-- Other views placeholders -->
+        <section id="view-stats" class="view">
+            <header class="dashboard-header">
+                <h1>Estadísticas 📊</h1>
+            </header>
+            <main class="stats-menu-grid">
+                <!-- 1. Indicadores Generales -->
+                <div class="stat-card" onclick="financeApp.showStatDetail('general')">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-info">
+                        <h3>Indicadores Generales</h3>
+                        <p>Resumen de salud financiera</p>
+                    </div>
+                </div>
+
+                <!-- 2. Predicción de Gastos -->
+                <div class="stat-card" onclick="financeApp.showStatDetail('prediction')">
+                    <div class="stat-icon">🔮</div>
+                    <div class="stat-info">
+                        <h3>Predicción de Gastos</h3>
+                        <p>Proyección IA fin de mes</p>
+                    </div>
+                </div>
+
+                <!-- 3. Comparación Mes Anterior -->
+                <div class="stat-card" onclick="financeApp.showStatDetail('comparison')">
+                    <div class="stat-icon">⚖️</div>
+                    <div class="stat-info">
+                        <h3>Comparación Mes Anterior</h3>
+                        <p>Balance vs mes pasado</p>
+                    </div>
+                </div>
+
+                <!-- 4. Proyección Ahorro -->
+                <div class="stat-card" onclick="financeApp.showStatDetail('savings')">
+                    <div class="stat-icon">🐖</div>
+                    <div class="stat-info">
+                        <h3>Proyección Ahorro</h3>
+                        <p>Metas y capacidad futura</p>
+                    </div>
+                </div>
+
+                <!-- 5. Analytics Web -->
+                <div class="stat-card" onclick="window.location.href='/analytics'"
+                    style="border: 1px dashed var(--accent);">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-info">
+                        <h3>Dashboard Pro</h3>
+                        <p>Web Desktop & Gráficos</p>
+                    </div>
+                </div>
+            </main>
+        </section>
+
+        <section id="view-compromisos" class="view view-compromisos-layout">
+            <header class="dashboard-header">
+                <h1>Compromisos 🤝</h1>
+            </header>
+            <div class="kpi-container compromisos-kpi-top">
+                <div class="kpi-card" id="kpi-card-debt">
+                    <span class="kpi-label">Debo</span>
+                    <h3 id="kpi-debt-amount">$0</h3>
+                    <p id="kpi-debt-count" class="kpi-subtext">0 items</p>
+                </div>
+                <div class="kpi-card" id="kpi-card-loan">
+                    <span class="kpi-label">Me Deben</span>
+                    <h3 id="kpi-loan-amount">$0</h3>
+                    <p id="kpi-loan-count" class="kpi-subtext">0 items</p>
+                </div>
+                <div class="kpi-card" id="kpi-card-balance">
+                    <span class="kpi-label">Balance</span>
+                    <h3 id="kpi-total-balance">$0</h3>
+                    <p id="kpi-balance-detail" class="kpi-subtext">Neutro</p>
+                </div>
+            </div>
+            <main class="compromisos-main">
+                <div id="compromisos-list" class="compromisos-list">
+                    <p class="placeholder-text">Cargando compromisos...</p>
+                </div>
+            </main>
+
+        </section>
+
+        <section id="view-mas" class="view">
+            <header class="dashboard-header">
+                <h1>Ajustes ⚙️</h1>
+            </header>
+
+            <div class="settings-container">
+                <!-- 1. Presupuesto -->
+                <h3 class="setting-section-title">Finanzas</h3>
+                <div class="card setting-card">
+                    <div class="card-header">
+                        <h3>Presupuesto Mensual</h3>
+                        <span class="card-icon">💰</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-row">
+                            <span class="currency-symbol">$</span>
+                            <input type="number" id="global-budget-input" placeholder="0">
+                        </div>
+                        <button id="btn-save-budget" class="btn-primary-outline" style="width:100%; margin-top:10px;">
+                            Guardar Límite
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. General -->
+                <h3 class="setting-section-title">General</h3>
+                <div class="card setting-card row-card">
+                    <div class="row-info">
+                        <h3>Modo Oscuro</h3>
+                        <p>Descanso visual</p>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="toggle-dark-mode">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+
+                <div class="card setting-card row-card" style="opacity: 0.7;">
+                    <div class="row-info">
+                        <h3>Alertas Inteligentes</h3>
+                        <p>Notificaciones push al 80%</p>
+                    </div>
+                    <span class="badge-coming-soon">Pronto</span>
+                </div>
+
+                <!-- 3. IA & Automatización -->
+                <h3 class="setting-section-title">IA & Automatización (Próximamente)</h3>
+
+                <div class="card setting-card row-card" style="opacity: 0.7;">
+                    <div class="row-info">
+                        <h3>Categorías Automáticas</h3>
+                        <p>IA predice según el nombre</p>
+                    </div>
+                    <span class="badge-coming-soon">Pronto</span>
+                </div>
+
+                <div class="card setting-card" style="opacity: 0.7;">
+                    <div class="card-header">
+                        <h3>Scanner de Boletas</h3>
+                        <span class="card-icon">📸</span>
+                    </div>
+                    <div class="card-body">
+                        <p class="setting-desc">Usará <strong>Gemini Vision</strong> para leer recibos automáticamente.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="card setting-card">
+                    <div class="card-header">
+                        <h3>Lectura de Correos</h3>
+                        <span class="card-icon">📧</span>
+                    </div>
+                    <div class="card-body">
+                        <p class="setting-desc">Buscará recibos de compras en tu Gmail.</p>
+                        <button id="btn-sync-gmail" class="btn-primary-outline" style="width:100%; margin-top:10px;">
+                            🔃 Sincronizar Ahora
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Zona de Peligro / Mantenimiento -->
+                <h3 class="setting-section-title">Mantenimiento</h3>
+                <button id="btn-hard-reset" class="btn-danger-outline" style="width:100%;">
+                    🔄 Restablecer App (Forzar Actualización)
+                </button>
+
+                <div class="app-version"
+                    style="text-align: center; margin-top: 30px; color: var(--text-muted); font-size: 0.8rem;">
+                    Cerebro App v3.0.41
+                </div>
+            </div>
+        </section>
+
+        <!-- Floating Action Button -->
+        <button class="fab" id="fab-add">
+            <span class="icon">+</span>
+            <span class="label">Agregar Gasto</span>
+        </button>
+
+        <!-- Modal for adding expense -->
+        <div class="modal" id="modal-add">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="header-content">
+                        <div class="category-icon" id="modal-cat-icon">✨</div>
+                        <h2 id="modal-title">Nuevo Gasto</h2>
+                    </div>
+                    <button class="btn-close">&times;</button>
+                </div>
+                <form id="expense-form">
+                    <div class="input-group">
+                        <label>Monto</label>
+                        <input type="number" id="expense-amount" placeholder="$0" required inputmode="numeric">
+                    </div>
+
+                    <div class="input-group">
+                        <label>Concepto</label>
+                        <input type="text" id="expense-desc" placeholder="¿Qué compraste?" required>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Sección</label>
+                        <select id="section-select" required>
+                            <!-- Populated by JS -->
+                        </select>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Categoría</label>
+                        <select id="category" required>
+                            <!-- Populated by JS -->
+                        </select>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Medio de Pago</label>
+                        <select id="payment-method" required>
+                            <option value="DEBITO">Débito</option>
+                            <option value="CREDITO">Crédito</option>
+                            <option value="EFECTIVO">Efectivo</option>
+                            <option value="TRANSFERENCIA">Transferencia</option>
+                        </select>
+                    </div>
+
+                    <!-- Hidden file input for camera -->
+                    <input type="file" id="image-upload" accept="image/*" capture="environment" style="display: none;">
+
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button type="button" class="btn-secondary" id="btn-camera"
+                            onclick="document.getElementById('image-upload').click()"
+                            style="flex: 1; padding: 12px; border: 1px solid var(--accent); color: var(--accent); background: none; border-radius: 12px; font-weight: 500;">
+                            📸 Adjuntar Boleta
+                        </button>
+                        <button type="submit" class="btn-submit" id="btn-submit-expense"
+                            style="flex: 2; margin-top: 0;">Guardar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal for category detail -->
+        <div id="modal-detail" class="modal">
+            <div class="modal-content detail-content">
+                <header class="modal-header">
+                    <div class="header-content">
+                        <span id="detail-icon" class="category-icon">📁</span>
+                        <h2 id="detail-title">Detalle</h2>
+                    </div>
+                    <button class="btn-close" id="btn-close-detail">&times;</button>
+                </header>
+                <div class="detail-overview">
+                    <div class="overview-item">
+                        <span class="label">Gastado</span>
+                        <span id="detail-spent" class="value">$0</span>
+                    </div>
+                    <div class="overview-item">
+                        <span class="label">Presupuesto</span>
+                        <span id="detail-budget" class="value">$0</span>
+                    </div>
+                </div>
+                <div class="progress-container large">
+                    <div id="detail-progress-bar" class="progress-bar"></div>
+                </div>
+                <div id="detail-subcategories" class="subcategory-list">
+                    <!-- Subcategories will be injected here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Modal for Editing Budget -->
+        <div id="modal-edit-budget" class="modal">
+            <div class="modal-content small-modal">
+                <span class="btn-close">&times;</span>
+                <div class="modal-header">
+                    <h3>Editar Presupuesto</h3>
+                </div>
+                <div class="modal-body">
+                    <p id="edit-cat-name" style="margin-bottom:15px; font-weight:500; color:var(--text-muted)"></p>
+                    <div class="input-group">
+                        <label>Nombre de Subcategoría</label>
+                        <input type="text" id="edit-cat-name-input" placeholder="Nombre">
+                    </div>
+                    <div class="input-group">
+                        <label>Nuevo Presupuesto</label>
+                        <input type="number" id="edit-cat-amount" placeholder="0">
+                    </div>
+                    <button id="btn-save-edit-cat" class="btn-primary" style="width:100%; margin-top:10px;">Guardar
+                        Cambios</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for statistics detail -->
+        <div id="modal-stats-detail" class="modal">
+            <div class="modal-content detail-content">
+                <header class="modal-header">
+                    <div class="header-content">
+                        <span id="stats-detail-icon" class="category-icon">📊</span>
+                        <h2 id="stats-detail-title">Estadística</h2>
+                    </div>
+                    <button class="btn-close" id="btn-close-stats">&times;</button>
+                </header>
+                <div id="stats-detail-content" class="stats-body">
+                    <!-- Dynamic charts and numbers here -->
+                    <p class="placeholder-text">Cargando datos...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for adding commitment -->
+        <div id="modal-add-commitment" class="modal">
+            <div class="modal-content">
+                <header class="modal-header">
+                    <h2>Nuevo Compromiso</h2>
+                    <button class="btn-close" id="btn-close-commitment">&times;</button>
+                </header>
+                <form id="commitment-form">
+                    <div class="input-group">
+                        <label>Título (Persona/Entidad)</label>
+                        <input type="text" id="comm-title" placeholder="Ej: Juan Pérez" required>
+                    </div>
+                    <div class="input-group">
+                        <label>Tipo</label>
+                        <div class="toggle-group">
+                            <input type="radio" name="comm-type" id="type-debt" value="DEBT" checked>
+                            <label for="type-debt" class="toggle-btn debt">Debo 🔴</label>
+
+                            <input type="radio" name="comm-type" id="type-loan" value="LOAN">
+                            <label for="type-loan" class="toggle-btn loan">Me Deben 🟢</label>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label>Monto Total</label>
+                        <input type="number" id="comm-amount" placeholder="0" required inputmode="numeric">
+                    </div>
+                    <div class="input-group">
+                        <label>Vencimiento (Opcional)</label>
+                        <input type="date" id="comm-date">
+                    </div>
+                    <button type="submit" class="btn-submit" id="btn-submit-commitment">Guardar Compromiso</button>
+                </form>
+            </div>
+        </div>
+
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-view="inicio">
+                <img src="https://img.icons8.com/material-rounded/24/94a3b8/home.png" alt="Home"
+                    class="nav-icon active-icon">
+                <span class="label">Inicio</span>
+            </button>
+            <button class="nav-item" data-view="stats">
+                <img src="https://img.icons8.com/material-rounded/24/94a3b8/bar-chart.png" alt="Stats" class="nav-icon">
+                <span class="label">Estadísticas</span>
+            </button>
+            <button class="nav-item" data-view="compromisos">
+                <img src="https://img.icons8.com/material-rounded/24/94a3b8/handshake.png" alt="Compromisos"
+                    class="nav-icon">
+                <span class="label">Compromisos</span>
+            </button>
+            <button class="nav-item" data-view="mas">
+                <img src="https://img.icons8.com/material-rounded/24/94a3b8/menu.png" alt="Más" class="nav-icon">
+                <span class="label">Más</span>
+            </button>
+        </nav>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/app.js?v=4.0.2"></script>
+    </script>
+    <script>
+        // SERVICE WORKERS TEMPORARILY DISABLED FOR DEBUG
+        console.log('Service Workers disabled for debugging');
+
+        // Clear any existing caches and service workers
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function (registrations) {
+                for (let registration of registrations) {
+                    registration.unregister();
+                    console.log('Unregistered SW:', registration);
+                }
+            });
+        }
+
+        caches.keys().then(names => {
+            for (let name of names) {
+                caches.delete(name);
+                console.log('Deleted cache:', name);
+            }
+        });
+    </script>
+</body>
+
+</html>
