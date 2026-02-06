@@ -52,11 +52,18 @@ def normalize_sheet_date(date_val):
     try:
         for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
             try:
-                dt = date.fromisoformat(s) if fmt=="%Y-%m-%d" else date.strptime(s, fmt)
+                dt = date.fromisoformat(s) if fmt=="%Y-%m-%d" else datetime.strptime(s, fmt).date()
                 return dt.strftime("%Y-%m-%d")
             except: continue
         return s
     except: return s
+
+def normalize_amount(amt_val):
+    if amt_val is None: return "0"
+    s = str(amt_val).strip()
+    for char in ["$", ".", ","]:
+        s = s.replace(char, "")
+    return s
 
 
 
@@ -450,24 +457,26 @@ def delete_expense_from_sheet(expense_data: dict, tech_name: str):
         all_values = ws.get_all_values()
         if not all_values: return
 
-        # Headers: Fecha, Concepto, Sección, Categoría, Monto, Método Pago, Usuario, Imagen URL
-        # We look for a match. To be safe, we look from the bottom (newest ones).
-        target_date = str(expense_data.get("date"))
-        target_concept = str(expense_data.get("concept"))
-        target_amount = str(expense_data.get("amount"))
-        target_user = str(tech_name)
+        target_date = normalize_sheet_date(expense_data.get("date"))
+        target_concept = str(expense_data.get("concept")).strip().lower()
+        target_amount = normalize_amount(expense_data.get("amount"))
+        target_user = str(tech_name).strip().lower()
 
         found_row = -1
-        for i in range(len(all_values) - 1, 0, -1): # Start from last row, skip header
+        for i in range(len(all_values) - 1, 0, -1):
             row = all_values[i]
-            # Match strictly by Date, Concept, Amount, User
-            if (len(row) >= 7 and 
-                row[0] == target_date and 
-                row[1] == target_concept and 
-                row[4] == target_amount and 
-                row[6] == target_user):
-                found_row = i + 1 # gspread is 1-indexed
-                break
+            if len(row) >= 7:
+                r_date = normalize_sheet_date(row[0])
+                r_concept = str(row[1]).strip().lower()
+                r_amount = normalize_amount(row[4])
+                r_user = str(row[6]).strip().lower()
+
+                if (r_date == target_date and 
+                    r_concept == target_concept and 
+                    r_amount == target_amount and 
+                    r_user == target_user):
+                    found_row = i + 1
+                    break
         
         if found_row != -1:
             ws.delete_rows(found_row)
@@ -681,3 +690,65 @@ def rename_category_in_expenses_sheet(sheet, section, old_cat, new_cat):
         print(f"[SHEETS] ERROR in rename_category_in_expenses_sheet: {e}")
         import traceback
         traceback.print_exc()
+
+def update_expense_in_sheet(old_data: dict, new_data: dict, tech_name: str):
+    """
+    Finds an expense by old_data and updates it with new_data.
+    """
+    print(f"DEBUG [SHEETS] Syncing UPDATE for expense: {old_data.get('concept')} -> {new_data.get('concept')}")
+    try:
+        sheet = get_sheet()
+        if not sheet: return False
+        try:
+            ws = sheet.worksheet("Gastos")
+        except:
+            return False
+
+        all_values = ws.get_all_values()
+        if not all_values: return False
+
+        # Match criteria
+        target_date = normalize_sheet_date(old_data.get("date"))
+        target_concept = str(old_data.get("concept")).strip().lower()
+        target_amount = normalize_amount(old_data.get("amount"))
+        target_user = str(tech_name).strip().lower()
+
+        found_row = -1
+        for i in range(len(all_values) - 1, 0, -1):
+            row = all_values[i]
+            if len(row) >= 7:
+                r_date = normalize_sheet_date(row[0])
+                r_concept = str(row[1]).strip().lower()
+                r_amount = normalize_amount(row[4])
+                r_user = str(row[6]).strip().lower()
+
+                if (r_date == target_date and 
+                    r_concept == target_concept and 
+                    r_amount == target_amount and 
+                    r_user == target_user):
+                    found_row = i + 1
+                    break
+        
+        if found_row != -1:
+            # Prepare new row
+            new_row = [
+                str(new_data.get("date")),
+                new_data.get("concept"),
+                new_data.get("section", "OTROS"),
+                new_data.get("category"),
+                new_data.get("amount"),
+                new_data.get("payment_method") or "N/A",
+                tech_name,
+                new_data.get("image_url") or ""
+            ]
+            cell_range = f"A{found_row}:H{found_row}"
+            ws.update(cell_range, [new_row])
+            print(f"DEBUG [SHEETS] Updated expense row {found_row} in Sheets.")
+            return True
+        else:
+            print("DEBUG [SHEETS] No matching expense found in Sheets for update.")
+            return False
+
+    except Exception as e:
+        print(f"ERROR [SHEETS] Update expense in sheet failed: {e}")
+        return False

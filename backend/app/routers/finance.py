@@ -147,7 +147,7 @@ def get_my_expenses(
     """
     Get all expenses. If DB is empty, attempts to restore from Sheets.
     """
-    expenses = db.query(Expense).order_by(Expense.date.desc(), Expense.id.desc()).all()
+    expenses = db.query(Expense).filter(Expense.user_id == current_user.id).order_by(Expense.id.desc()).all()
     
     if not expenses:
         print("DEBUG [DB] Database empty. Fetching from Sheets...")
@@ -157,23 +157,21 @@ def get_my_expenses(
             
             if sheet_expenses:
                 for exp_data in sheet_expenses:
-                    # Create Expense object
-                    # Note: We assign them to current_user
                     new_expense = Expense(
-                        user_id=current_user.id, # Link to current user
+                        user_id=current_user.id,
                         date=exp_data["date"],
                         concept=exp_data["concept"],
                         category=exp_data["category"],
                         amount=exp_data["amount"],
                         payment_method=exp_data["payment_method"],
                         image_url=exp_data["image_url"],
-                        section="OTROS" # Default section as it is not in simple sync
+                        section="OTROS"
                     )
                     db.add(new_expense)
                 
                 db.commit()
-                # Re-query
-                expenses = db.query(Expense).order_by(Expense.date.desc(), Expense.id.desc()).all()
+                # Query again strictly for this user
+                expenses = db.query(Expense).filter(Expense.user_id == current_user.id).order_by(Expense.id.desc()).all()
                 print(f"DEBUG [DB] Restored {len(expenses)} expenses from Sheets.")
         except Exception as e:
             print(f"ERROR [DB] Emergency sync failed: {e}")

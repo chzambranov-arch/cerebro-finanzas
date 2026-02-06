@@ -74,11 +74,15 @@ class FinanceApp {
     }
 
     async refreshData() {
+        console.log('[DEBUG] Refreshing all data...');
         await this.loadDashboard();
-        await this.loadExpenses();
-        if (this.currentView === 'compromisos') {
-            await this.loadCompromisos();
-        }
+        // Small delay to ensure DB sync is settled and UI can breathe
+        setTimeout(async () => {
+            await this.loadExpenses();
+            if (this.currentView === 'compromisos') {
+                await this.loadCompromisos();
+            }
+        }, 300);
     }
 
     setupNavigation() {
@@ -807,12 +811,14 @@ class FinanceApp {
     }
 
     async loadExpenses() {
+        console.log('[DEBUG] Loading expenses...');
         try {
             const response = await fetch(`${CONFIG.API_BASE}/expenses/?_t=${Date.now()}`, {
                 headers: this.getHeaders()
             });
             if (response.ok) {
                 const expenses = await response.json();
+                console.log(`[DEBUG] Received ${expenses.length} expenses`);
                 this.renderExpenses(expenses);
             }
         } catch (error) {
@@ -822,34 +828,43 @@ class FinanceApp {
 
     renderExpenses(expenses) {
         const list = document.getElementById('expense-list');
-        if (!list) return;
+        if (!list) {
+            console.error('[DEBUG] #expense-list not found in DOM');
+            return;
+        }
+        console.log(`[DEBUG] Rendering ${expenses.length} expenses...`);
         list.innerHTML = '';
+
         const icons = {
-            // Sections
             'COMIDAS': '🍕', 'TRANSPORTE': '🚗', 'VICIOS': '🎉', 'OTROS': '📦',
-            'GASTOS FIJOS': '🏠', 'SALUD': '💊', 'EDUCACION': '📚', 'PERSONALES': '👤',
-            // Categories Fallback
+            'CASA': '🏠', 'GASTOS FIJOS': '🏠', 'SALUD': '💊', 'EDUCACION': '📚',
+            'PERSONALES': '👤', 'FAMILIA': '👨‍👩‍👧‍👦',
             'Supermercado': '🛒', 'Restaurante': '🍽️', 'Bencina': '⛽', 'Uber': '🚖',
             'Cerveza': '🍺', 'Farmacia': '🩹', 'Arriendo': '🔑'
         };
+
         expenses.slice(0, 50).forEach(exp => {
-            const item = document.createElement('div');
-            item.className = 'expense-item';
+            try {
+                const item = document.createElement('div');
+                item.className = 'expense-item';
 
-            // Try to find icon by Category first, then Section
-            let icon = icons[exp.category] || icons[exp.section] || '💰';
-            const payMethod = exp.payment_method ? ` • ${exp.payment_method}` : '';
+                let icon = icons[exp.category] || icons[exp.category?.toUpperCase()] || icons[exp.section] || icons[exp.section?.toUpperCase()] || '💰';
+                const payMethod = exp.payment_method ? ` • ${exp.payment_method}` : '';
+                const dateStr = exp.date ? new Date(exp.date).toLocaleDateString() : 'N/A';
 
-            item.innerHTML = `
-                <div class="exp-icon-box">${icon}</div>
-                <div class="exp-details">
-                    <h4>${exp.concept}</h4>
-                    <p>${new Date(exp.date).toLocaleDateString()} • ${exp.category}${payMethod}</p>
-                </div>
-                <div class="exp-amount">$${exp.amount.toLocaleString()}</div>
-                <button class="btn-delete-expense" data-id="${exp.id}" title="Eliminar gasto">🗑️</button>
-            `;
-            list.appendChild(item);
+                item.innerHTML = `
+                    <div class="exp-icon-box">${icon}</div>
+                    <div class="exp-details">
+                        <h4>${exp.concept || 'Sin concepto'}</h4>
+                        <p>${dateStr} • ${exp.category || 'General'}${payMethod}</p>
+                    </div>
+                    <div class="exp-amount">$${(exp.amount || 0).toLocaleString()}</div>
+                    <button class="btn-delete-expense" data-id="${exp.id}" title="Eliminar gasto">🗑️</button>
+                `;
+                list.appendChild(item);
+            } catch (err) {
+                console.error('[DEBUG] Error rendering single expense:', err, exp);
+            }
         });
     }
 

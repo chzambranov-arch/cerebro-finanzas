@@ -4,85 +4,101 @@ import json
 import google.generativeai as genai
 from sqlalchemy.orm import Session
 from app.models.budget import Category
-from app.services.db_service import add_category_to_db
-from app.services.sheets_service import add_category_to_sheet
-
-# Configure Gemini
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+from app.models.finance import Expense
+from app.models.models import User
 
 def process_finance_message(db: Session, user_id: int, message: str):
     """
-    Procesa un mensaje de lenguaje natural usando Gemini para extraer un gasto estructurado.
+    Procesa un mensaje de lenguaje natural usando OpenAI (ChatGPT) o Gemini como fallback.
     """
-    # Load API Key at runtime to ensure env vars are loaded
-    api_key = os.getenv("GEMINI_API_KEY")
-    
-    if not api_key:
-        print("ERROR: GEMINI_API_KEY not found in environment variables.")
-        return {"status": "error", "message": "No se ha configurado la API Key de Gemini"}
-    
-    genai.configure(api_key=api_key)
+    openai_key = os.getenv("OPENAI_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
 
-    # 1. Obtener contexto del usuario (Categorías existentes)
+    # 1. Preparar Contexto común
     categories = db.query(Category).filter(Category.user_id == user_id).all()
-    cat_list = [f"{c.section}/{c.name}" for c in categories]
-    cat_context = ", ".join(cat_list)
-
-    # 2. Prompt System
-    prompt = f"""
-    Actúa como 'Lúcio', un asistente financiero experto y amable.
-    Tu objetivo es INTERPRETAR el mensaje del usuario y extraer la información para registrar un gasto.
+    # Presentar de forma clara: Sección -> Categoría
+    cat_context = "\n".join([f"- [{c.section}] -> {c.name}" for c in categories])
     
-    INFORMACIÓN DISPONIBLE (Categorías actuales del usuario):
-    [{cat_context}]
+    recent_expenses = db.query(Expense).filter(Expense.user_id == user_id).order_by(Expense.id.desc()).limit(15).all()
+    expense_context_list = []
+    for e in recent_expenses:
+        expense_context_list.append(f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}")
+    expense_context = "\n".join(expense_context_list)
 
-    REGLAS DE RAZONAMIENTO:
-    1. Identifica el MONTO (ej: 15000, 15k, $15.000).
-    2. Identifica el CONCEPTO (ej: Sushi, Uber, Bencina).
-    3. ASIGNA una CATEGORÍA y SECCIÓN basándote en la lista disponible.
-    4. SI NO EXISTE una categoría exacta, busca la más lógica (ej: "Sushi" -> "Comida/Restaurante" o "Uber Eats").
-       - SI y solo SI no hay nada remotamente parecido, inventa una categoría lógica nueva, pero prefiere las existentes.
-    5. Detecta si menciona un método de pago (Tarjeta, Efectivo), sino asume "Débito".
+    from datetime import datetime
+    hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    FORMATO DE RESPUESTA JSON (SIN MARKDOWN, solo JSON puro):
+    prompt = f"""
+    Eres 'Lúcio', asitente de finanzas. 
+    Fecha actual: {hoy}
+
+    GASTOS RECIENTES:
+    {expense_context}
+
+    JERARQUÍA DE CATEGORÍAS (Usa exactamente estos nombres):
+    {cat_context}
+
+    REGLAS DE ORO:
+    - SIEMPRE usa 'CREATE' para mensajes como "Agrega X", "Gasto X en Y", o simplemente "X en Y".
+    - NUNCA sumes montos. Si el usuario dice "Agrega 2000", el amount es 2000. Punto.
+    - 'target_id' (CRÍTICO para UPDATE/DELETE):
+        * Si dice "el último", usa el ID del primer gasto de la lista de 'GASTOS RECIENTES'.
+        * Si menciona un concepto o monto, busca el ID que mejor coincida en esa lista.
+        * SIEMPRE debe ser el ID numérico.
+    - 'section': Nombre sin corchetes (ej: 'CASA').
+    - 'category': Nombre sin flechas (ej: 'Arriendo').
+    - 'UPDATE' solo si dice explícitamente "Corrije", "Edita" o "Cambia" (ej: "no eran 1500, eran 2000").
+
+    JSON FORMAT:
     {{
-        "amount": 0,
-        "concept": "string",
-        "category": "string",
-        "section": "string",
-        "payment_method": "string",
-        "response_text": "string (Tu respuesta amable al usuario confirmando la acción)"
+        "intent": "CREATE | UPDATE | DELETE | TALK",
+        "target_id": ID_O_NUMERICO,
+        "amount": monto_final_sin_sumar_nada,
+        "concept": "Nombre limpio",
+        "category": "Nombre_exacto_limpio",
+        "section": "Seccion_exacta_limpio",
+        "payment_method": "metodo",
+        "response_text": "Respuesta corta"
     }}
 
-    Ejemplo Usuario: "Sushi 15000"
-    Respuesta JSON:
-    {{
-        "amount": 15000,
-        "concept": "Sushi",
-        "category": "Restaurante", 
-        "section": "ALIMENTACION",
-        "payment_method": "Débito",
-        "response_text": "¡Entendido! Registré $15.000 en Sushi bajo la categoría Restaurante."
-    }}
-
-    Mensaje del Usuario: "{message}"
+    PROCESA ESTE MENSAJE: "{message}"
     """
+
+    # --- INTENTAR OPENAI PRIMERO SI HAY KEY ---
+    if openai_key and len(openai_key) > 10:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": "Eres Lúcio, experto financiero."}, {"role": "user", "content": prompt}],
+                response_format={ "type": "json_object" }
+            )
+            data = json.loads(response.choices[0].message.content)
+            return {"status": "success", "data": _normalize_ai_data(data)}
+        except Exception as e:
+            print(f"OpenAI Error: {e}")
+
+    # --- FALLBACK A GEMINI ---
+    if not gemini_key:
+        return {"status": "error", "message": "No hay API Keys configuradas (Gemini/OpenAI)"}
 
     try:
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel('gemini-1.5-flash') # Formato correcto sin models/
         response = model.generate_content(prompt)
         text_response = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text_response)
-        
-        # Validar consistencia básica
-        if data.get("amount", 0) <= 0:
-            return {"status": "error", "message": "No pude identificar un monto válido."}
-
-        return {"status": "success", "data": data}
-
+        return {"status": "success", "data": _normalize_ai_data(data)}
     except Exception as e:
         error_msg = str(e)
-        print(f"Error Gemini: {error_msg}")
-        return {"status": "error", "message": "Lo siento, tuve un problema procesando tu solicitud. Por favor intenta de nuevo."}
+        if "429" in error_msg or "ResourceExhausted" in error_msg:
+            return {"status": "error", "message": "Lúcio está agotado (Límite de Google). Por favor, configura tu OPENAI_API_KEY para evitar esto."}
+        return {"status": "error", "message": "Error técnico: " + error_msg}
+
+def _normalize_ai_data(data: dict):
+    if data.get("intent") == "CREATE":
+        if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
+        if not data.get("section"): data["section"] = "OTROS"
+        if not data.get("payment_method"): data["payment_method"] = "Débito"
+    return data

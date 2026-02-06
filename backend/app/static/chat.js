@@ -80,32 +80,34 @@
 
                 if (response.ok) {
                     const data = await response.json();
+                    console.log("[DEBUG] Agent Response:", data);
                     this.addChatMessage(data.message, 'bot');
 
-                    if (data.action_taken) {
-                        console.log("Action taken by agent. Triggering data refresh...");
-                        // Use a small delay to ensure DB is ready and call it twice
-                        // just to be extra sure for the PWA experience
+                    // If intent is not TALK, it means we likely changed data (CREATE/UPDATE/DELETE)
+                    if (data.action_taken || (data.intent && data.intent !== 'TALK')) {
+                        console.log(`[DEBUG] Modification detected. Intent: ${data.intent}. Refreshing...`);
+
                         const refresh = async () => {
                             try {
-                                if (this.refreshData) await this.refreshData();
-                                else if (window.financeApp && window.financeApp.refreshData) {
+                                console.log("[DEBUG] Calling refreshData()...");
+                                if (window.financeApp && window.financeApp.refreshData) {
                                     await window.financeApp.refreshData();
+                                } else if (this.refreshData) {
+                                    await this.refreshData();
                                 }
                             } catch (e) {
                                 console.error("Error refreshing data:", e);
                             }
                         };
 
-                        // Initial refresh
+                        // Triple refresh for stability (PWA/Local sync)
                         refresh();
+                        setTimeout(refresh, 500);
+                        setTimeout(refresh, 1500);
 
-                        // Secondary refresh after 1s for consistency
-                        setTimeout(refresh, 1000);
-
-                        // Receipt Card
+                        // Receipt Card safety
                         if (data.expense_data) {
-                            this.addReceiptCard(data.expense_data);
+                            setTimeout(() => this.addReceiptCard(data.expense_data), 200);
                         }
                     }
                 } else {
