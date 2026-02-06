@@ -283,6 +283,41 @@
             <span class="label">Agregar Gasto</span>
         </button>
 
+        <!-- A.I. Floating Button -->
+        <button class="fab fab-ai" id="fab-ai" onclick="financeApp.toggleChat()">
+            <span class="icon">🤖</span>
+            <span class="label">Lúcio</span>
+        </button>
+
+        <!-- A.I. Chat Modal -->
+        <div class="chat-overlay" id="chat-overlay">
+            <div class="chat-window">
+                <header class="chat-header">
+                    <div class="chat-avatar-container">
+                        <img src="/static/lucio.png" class="chat-avatar-img"
+                            onerror="this.src='https://img.icons8.com/color/48/robot-2.png'">
+                        <div class="chat-info">
+                            <h3>Lúcio</h3>
+
+                            <span class="status-dot"></span> <small>En línea</small>
+                        </div>
+                    </div>
+                    <button class="btn-close-chat" onclick="financeApp.toggleChat()">&times;</button>
+                </header>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message bot">
+                        <div class="bubble">Hola Christian 👋, soy Lúcio. <br>Dime algo como "Sushi 15000" y yo lo
+                            registraré.</div>
+                        <div class="time">Ahora</div>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" placeholder="Escribe un gasto..." autocomplete="off">
+                    <button id="btn-send-chat" onclick="financeApp.sendChatMessage()">➤</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Modal for adding expense -->
         <div class="modal" id="modal-add">
             <div class="modal-content">
@@ -469,8 +504,10 @@
             </button>
         </nav>
     </div>
+    <link rel="stylesheet" href="/static/chat.css?v=1.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/static/app.js?v=4.0.2"></script>
+    <script src="/static/chat.js?v=1.0"></script>
     </script>
     <script>
         // SERVICE WORKERS TEMPORARILY DISABLED FOR DEBUG

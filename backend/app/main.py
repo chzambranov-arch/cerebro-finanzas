@@ -3,7 +3,7 @@ import os
 from app.core.config import settings
 from app.database import engine, Base
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, users, finance, commitments, setup
+from app.routers import auth, users, finance, commitments, setup, agent
 from app.models.finance import Expense  # Import to register with Base
 from app.models.budget import Budget, Category, AppConfig  # Import budget models
 
@@ -64,6 +64,7 @@ app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["u
 app.include_router(finance.router, prefix=f"{settings.API_V1_STR}/expenses", tags=["finance"])
 app.include_router(commitments.router, prefix=f"{settings.API_V1_STR}/commitments", tags=["commitments"])
 app.include_router(setup.router, prefix=f"{settings.API_V1_STR}/setup", tags=["setup"])
+app.include_router(agent.router, prefix=f"{settings.API_V1_STR}/agent", tags=["agent"])
 
 from fastapi.responses import FileResponse
 
