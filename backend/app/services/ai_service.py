@@ -16,8 +16,14 @@ def process_finance_message(db: Session, user_id: int, message: str):
     """
     Procesa un mensaje de lenguaje natural usando Gemini para extraer un gasto estructurado.
     """
+    # Load API Key at runtime to ensure env vars are loaded
+    api_key = os.getenv("GEMINI_API_KEY")
+    
     if not api_key:
+        print("ERROR: GEMINI_API_KEY not found in environment variables.")
         return {"status": "error", "message": "No se ha configurado la API Key de Gemini"}
+    
+    genai.configure(api_key=api_key)
 
     # 1. Obtener contexto del usuario (Categorías existentes)
     categories = db.query(Category).filter(Category.user_id == user_id).all()
@@ -65,7 +71,7 @@ def process_finance_message(db: Session, user_id: int, message: str):
     """
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('models/gemini-2.5-flash')
         response = model.generate_content(prompt)
         text_response = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text_response)
@@ -77,5 +83,6 @@ def process_finance_message(db: Session, user_id: int, message: str):
         return {"status": "success", "data": data}
 
     except Exception as e:
-        print(f"Error Gemini: {e}")
-        return {"status": "error", "message": "Lo siento, tuve un problema procesando tu solicitud."}
+        error_msg = str(e)
+        print(f"Error Gemini: {error_msg}")
+        return {"status": "error", "message": "Lo siento, tuve un problema procesando tu solicitud. Por favor intenta de nuevo."}

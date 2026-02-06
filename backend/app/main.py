@@ -1,5 +1,10 @@
 from fastapi import FastAPI
 import os
+from dotenv import load_dotenv
+
+# Load env vars before anything else
+load_dotenv()
+
 from app.core.config import settings
 from app.database import engine, Base
 from fastapi.staticfiles import StaticFiles

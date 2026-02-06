@@ -415,7 +415,7 @@ class FinanceApp {
 
     async loadDashboard() {
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/dashboard`, {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/dashboard?_t=${Date.now()}`, {
                 headers: this.getHeaders()
             });
             if (response.ok) {
@@ -808,7 +808,7 @@ class FinanceApp {
 
     async loadExpenses() {
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/`, {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/?_t=${Date.now()}`, {
                 headers: this.getHeaders()
             });
             if (response.ok) {

@@ -1,29 +1,50 @@
 
 (function () {
-    // Ensure FinanceApp exists
-    if (!window.FinanceApp) {
-        console.error("FinanceApp not found. Chat module cannot load.");
+    console.log("Chat Module Loading...");
+
+    // 1. Resolve FinanceApp Class
+    // In global scope, 'class FinanceApp' might not be on 'window' property directly
+    let targetClass = null;
+    try {
+        if (typeof FinanceApp !== 'undefined') {
+            targetClass = FinanceApp;
+        } else if (window.FinanceApp && typeof window.FinanceApp === 'function') {
+            targetClass = window.FinanceApp;
+        }
+    } catch (e) {
+        console.error("Error finding FinanceApp", e);
+    }
+
+    if (!targetClass) {
+        console.error("FinanceApp Class NOT found. Chat methods not attached.");
         return;
     }
 
-    // Extend prototype with Chat methods
-    Object.assign(FinanceApp.prototype, {
+    console.log("FinanceApp Class found. Extending prototype with Chat capabilities.");
+
+    // Extend prototype
+    Object.assign(targetClass.prototype, {
 
         toggleChat: function () {
+            console.log("toggleChat called");
             const overlay = document.getElementById('chat-overlay');
             if (overlay) {
                 const isActive = overlay.classList.contains('active');
                 if (isActive) {
                     overlay.classList.remove('active');
-                    this.toggleBodyModal(false);
+                    if (this.toggleBodyModal) this.toggleBodyModal(false);
                 } else {
                     overlay.classList.add('active');
-                    this.toggleBodyModal(true);
+                    if (this.toggleBodyModal) this.toggleBodyModal(true);
+
+                    // Focus input
                     setTimeout(() => {
                         const input = document.getElementById('chat-input');
                         if (input) input.focus();
                     }, 300);
                 }
+            } else {
+                console.error("Chat overlay element #chat-overlay not found in DOM");
             }
         },
 
@@ -40,8 +61,11 @@
             const thinkingDiv = this.addChatMessage('Pensando...', 'bot', true);
 
             try {
-                // Use CONFIG from app.js scope if available, else assume standard path
-                const apiBase = window.CONFIG ? window.CONFIG.API_BASE : '/api/v1';
+                // Determine API Base
+                // If CONFIG is not available, try to infer or fallback
+                let apiBase = '/api/v1';
+                if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
+                else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
 
                 const response = await fetch(`${apiBase}/agent/chat`, {
                     method: 'POST',
@@ -49,7 +73,7 @@
                     body: JSON.stringify({ message: msgText })
                 });
 
-                // Remove logic for thinking bubble
+                // Remove thinking
                 if (thinkingDiv && thinkingDiv.parentNode) {
                     thinkingDiv.parentNode.removeChild(thinkingDiv);
                 }
@@ -59,19 +83,39 @@
                     this.addChatMessage(data.message, 'bot');
 
                     if (data.action_taken) {
-                        // Refresh Dashboard Data in Background
-                        this.refreshData();
-                        // Maybe show a mini receipt card in chat?
+                        console.log("Action taken by agent. Triggering data refresh...");
+                        // Use a small delay to ensure DB is ready and call it twice
+                        // just to be extra sure for the PWA experience
+                        const refresh = async () => {
+                            try {
+                                if (this.refreshData) await this.refreshData();
+                                else if (window.financeApp && window.financeApp.refreshData) {
+                                    await window.financeApp.refreshData();
+                                }
+                            } catch (e) {
+                                console.error("Error refreshing data:", e);
+                            }
+                        };
+
+                        // Initial refresh
+                        refresh();
+
+                        // Secondary refresh after 1s for consistency
+                        setTimeout(refresh, 1000);
+
+                        // Receipt Card
                         if (data.expense_data) {
                             this.addReceiptCard(data.expense_data);
                         }
                     }
                 } else {
-                    this.addChatMessage('Tuve un pequeño error con el servidor. Intenta de nuevo.', 'bot');
+                    const errTxt = await response.text();
+                    console.error("Agent Error:", errTxt);
+                    this.addChatMessage('Tuve un problema de conexión. Intenta de nuevo.', 'bot');
                 }
 
             } catch (e) {
-                console.error(e);
+                console.error("Network Error:", e);
                 // Remove thinking if error
                 if (thinkingDiv && thinkingDiv.parentNode) {
                     thinkingDiv.parentNode.removeChild(thinkingDiv);
@@ -91,7 +135,6 @@
             if (isThinking) {
                 content = '<span class="thinking-dots">...</span>';
             } else {
-                // Determine if text contains newlines, replace with <br>
                 content = text.replace(/\n/g, '<br>');
             }
 
@@ -107,9 +150,10 @@
 
         addReceiptCard: function (data) {
             const container = document.getElementById('chat-messages');
+            if (!container) return;
+
             const cardDiv = document.createElement('div');
             cardDiv.className = 'message bot';
-            // Use receipt-card class from css
             cardDiv.innerHTML = `
                 <div class="bubble receipt-card">
                     <div style="font-weight:bold; margin-bottom:4px;">✅ Gasto Registrado</div>
@@ -125,19 +169,18 @@
         }
     });
 
-    console.log('FinanceApp Chat Module Loaded');
-
-    // Setup Enter Key listener for chat
-    const chatInput = document.getElementById('chat-input');
-    if (chatInput) {
-        chatInput.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                // Need to call the method on the instance
-                // We assume 'window.financeApp' is the instance name in app.js
-                // app.js: window.financeApp = new FinanceApp();
-                if (window.financeApp) window.financeApp.sendChatMessage();
-            }
-        });
-    }
+    // Handle Enter Key
+    setTimeout(() => {
+        const chatInput = document.getElementById('chat-input');
+        if (chatInput) {
+            chatInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    if (window.financeApp && window.financeApp.sendChatMessage) {
+                        window.financeApp.sendChatMessage();
+                    }
+                }
+            });
+        }
+    }, 1000);
 
 })();
