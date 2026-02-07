@@ -161,5 +161,8 @@ def _normalize_ai_data(data):
         if data.get("intent") == "CREATE":
             if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
             if not data.get("section"): data["section"] = "OTROS"
-            if not data.get("payment_method"): data["payment_method"] = "Débito"
+        elif data.get("intent") == "CREATE_COMMITMENT":
+            # Asegurar que el concepto capture la nota mini del usuario
+            if not data.get("concept") and data.get("category"):
+                data["concept"] = data["category"]
     return data

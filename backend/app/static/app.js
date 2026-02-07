@@ -974,14 +974,13 @@ class FinanceApp {
                 item.className = 'expense-item';
 
                 let icon = icons[exp.category] || icons[exp.category?.toUpperCase()] || icons[exp.section] || icons[exp.section?.toUpperCase()] || '💰';
-                const payMethod = exp.payment_method ? ` • ${exp.payment_method}` : '';
                 const dateStr = exp.date ? new Date(exp.date).toLocaleDateString() : 'N/A';
 
                 item.innerHTML = `
                     <div class="exp-icon-box">${icon}</div>
                     <div class="exp-details">
                         <h4>${exp.concept || 'Sin concepto'}</h4>
-                        <p>${dateStr} • ${exp.category || 'General'}${payMethod}</p>
+                        <p>${dateStr} • ${exp.category || 'General'}</p>
                     </div>
                     <div class="exp-amount">$${(exp.amount || 0).toLocaleString()}</div>
                     <button class="btn-delete-expense" data-id="${exp.id}" title="Eliminar gasto">🗑️</button>
@@ -1154,10 +1153,15 @@ class FinanceApp {
             const item = document.createElement('div');
             item.className = `commitment-item ${c.status === 'PAID' ? 'paid-item' : ''}`;
             const isPaid = c.status === 'PAID';
+            const dateObj = c.created_at ? new Date(c.created_at) : new Date();
+            const dateStr = `${dateObj.getDate().toString().padStart(2, '0')}/${(dateObj.getMonth() + 1).toString().padStart(2, '0')}`;
+
             item.innerHTML = `
                 <div class="commitment-icon">${c.type === 'DEBT' ? '🔴' : '🟢'}</div>
                 <div class="commitment-details">
-                    <div class="commitment-title" style="${isPaid ? 'text-decoration: line-through;' : ''}">${c.title}</div>
+                    <div class="commitment-title" style="${isPaid ? 'text-decoration: line-through;' : ''}">
+                        ${c.title} <small style="display:block; font-size: 0.75rem; color: var(--text-muted);">${dateStr}</small>
+                    </div>
                     <div class="commitment-amount">$${c.total_amount.toLocaleString()}</div>
                 </div>
                 <div class="commitment-action">
