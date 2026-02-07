@@ -102,7 +102,13 @@ REGLAS MAESTRAS DE EJECUCIÓN (ORDEN DE PRIORIDAD)
 
 ## 4. OTRAS INTENCIONES (RESUMEN)
 - `DELETE_CATEGORY`: Solo si dice "borra", "elimina" la carpeta o ítem.
+  * **DISTINCIÓN CRÍTICA:** 
+    - Si dice "borra la CARPETA X" -> `target_type="SECTION"`, `section="X"`.
+    - Si dice "borra el ÍTEM Y" -> `target_type="CATEGORY"`, `category="Y"`.
 - `UPDATE_CATEGORY`: Solo para RENOMBRAR, MOVER o cambiar literalmente el SALDO/PRESUPUESTO.
+  * **DISTINCIÓN CRÍTICA:** 
+    - Si dice "renombra la CARPETA X" -> `target_type="SECTION"`, `section="X"`.
+    - Si dice "renombra el ÍTEM Y" -> `target_type="CATEGORY"`, `category="Y"`.
 - `CREATE_COMMITMENT`: "Debo", "Me deben".
   * **REGLA DE CAMPOS:** 
     - `category`: Nombre de la PERSONA (ej: "Mama", "El Panda").
@@ -115,6 +121,7 @@ FORMATO JSON DE SALIDA
 ────────────────────────
 {{
   "intent": "CREATE | UPDATE | DELETE | TALK | CREATE_CATEGORY | UPDATE_CATEGORY | ...",
+  "target_type": "SECTION | CATEGORY",
   "section": "Carpeta",
   "category": "Persona o Item",
   "amount": 0,
