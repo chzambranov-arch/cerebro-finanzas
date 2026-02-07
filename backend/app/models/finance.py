@@ -32,3 +32,26 @@ class Commitment(Base):
     status = Column(String, default="PENDING") # 'PENDING', 'PAID'
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class PendingExpense(Base):
+    __tablename__ = "pending_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    amount = Column(Integer, nullable=False)
+    concept = Column(String, nullable=False)
+    date = Column(Date, default=date.today)
+    payment_method = Column(String, nullable=True)
+    raw_email_id = Column(String, nullable=True, unique=True) # Gmail Message ID
+    status = Column(String, default="PENDING") # PENDING, PROCESSED, IGNORED
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    endpoint = Column(String, unique=True, nullable=False)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+

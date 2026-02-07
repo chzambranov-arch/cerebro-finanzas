@@ -7,7 +7,7 @@ from app.models.budget import Category
 from app.models.finance import Expense, Commitment
 from app.models.models import User
 
-def process_finance_message(db: Session, user_id: int, message: str):
+def process_finance_message(db: Session, user_id: int, message: str, extra_context: str = None, history: list = None):
     """
     Procesa un mensaje de lenguaje natural usando OpenAI (ChatGPT) o Gemini como fallback.
     """
@@ -16,7 +16,11 @@ def process_finance_message(db: Session, user_id: int, message: str):
 
     # 1. Preparar Contexto común (Categorías y Gastos)
     categories = db.query(Category).filter(Category.user_id == user_id).all()
-    cat_context = "\n".join([f"- [{c.section}] -> {c.name}" for c in categories])
+    # Agrupamos por secciones para el contexto
+    sections = set([c.section for c in categories])
+    sections_list = ", ".join(sections)
+    
+    cat_context = "\n".join([f"- [{c.section}] -> {c.name} (Presupuesto: ${c.budget:,})" for c in categories])
     
     recent_expenses = db.query(Expense).filter(Expense.user_id == user_id).order_by(Expense.id.desc()).limit(15).all()
     expense_context_list = [f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}" for e in recent_expenses]
@@ -30,47 +34,91 @@ def process_finance_message(db: Session, user_id: int, message: str):
         comm_context_list.append(f" - ID: {c.id} | {c_type} | ${c.total_amount} | {c.title} | Estado: {c.status}")
     comm_context = "\n".join(comm_context_list)
 
+    # 3. Historial de Chat
+    chat_history_txt = ""
+    if history:
+        # Aseguramos el orden cronológico
+        chat_history_txt = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in history])
+
     from datetime import datetime
     hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     prompt = f"""
-    Eres 'Lúcio', asitente de finanzas. 
-    Fecha actual: {hoy}
+Eres "Lúcio", asistente y coach financiero personal.
+Fecha actual: {hoy}
 
-    GASTOS RECIENTES:
-    {expense_context}
+Tu rol:
+- Ejecutar acciones financieras con precisión (Gastos, Categorías, Compromisos).
+- Mantener la integridad de los datos.
+- Desambiguar usando el historial de conversación.
 
-    COMPROMISOS (DEUDAS/PRÉSTAMOS):
-    {comm_context}
+────────────────────────
+CONTEXTO DINÁMICO
+────────────────────────
 
-    JERARQUÍA DE CATEGORÍAS (Usa exactamente estos nombres):
-    {cat_context}
+SECCIONES (CARPETAS) EXISTENTES:
+[{sections_list}]
 
-    REGLAS DE ORO:
-    - SIEMPRE usa 'CREATE' para gastos normales.
-    - USA 'CREATE_COMMITMENT' si el usuario dice "Debo X a...", "X me debe...", "Le presté X a...".
-    - USA 'MARK_PAID_COMMITMENT' si el usuario dice "Ya pagué X", "Me pagaron lo de Y", "Marca como pagado el compromiso Z". (Esto no lo borra, solo le pone el ticket verde).
-    - USA 'DELETE_COMMITMENT' solo si el usuario pide explícitamente BORRAR o ELIMINAR el registro.
-    - 'target_id': ID numérico para UPDATE/DELETE (Gasto) o DELETE_COMMITMENT/MARK_PAID_COMMITMENT (Compromiso).
-    - 'commitment_type': 'DEBT' (si yo debo) o 'LOAN' (si me deben).
-    - NUNCA sumes montos.
-    - 'section'/'category': Solo para gastos (CREATE).
-    - 'UPDATE' solo si pide explícitamente corregir un gasto existente.
+JERARQUÍA DE CATEGORÍAS (Section -> Item):
+{cat_context}
 
-    JSON FORMAT:
-    {{
-    "intent": "CREATE | UPDATE | DELETE | CREATE_COMMITMENT | MARK_PAID_COMMITMENT | DELETE_COMMITMENT | TALK",
-        "target_id": ID_O_NUMERICO,
-        "amount": monto_final,
-        "concept": "Referencia o Nombre Persona",
-        "category": "Nombre_exacto (solo gastos)",
-        "section": "Seccion_exacta (solo gastos)",
-        "commitment_type": "DEBT | LOAN",
-        "payment_method": "metodo",
-        "response_text": "Respuesta corta"
-    }}
+GASTOS RECIENTES (ÚSALOS SOLO PARA REFERENCIA):
+{expense_context}
 
-    PROCESA ESTE MENSAJE: "{message}"
+COMPROMISOS RECIENTES:
+{comm_context}
+
+HISTORIAL RECIENTE (CRÍTICO - MEMORIA CONVERSACIONAL):
+{chat_history_txt}
+
+────────────────────────
+REGLAS MAESTRAS DE EJECUCIÓN (ORDEN DE PRIORIDAD)
+────────────────────────
+
+## 1. MEMORIA Y CONTEXTO (¡PRIORIDAD MÁXIMA!)
+- **REGLA DE ORO:** Antes de procesar una nueva intención, revisa si hay una PREGUNTA PENDIENTE tuya en el historial inmediato (-1).
+- Si la hay, la entrada del usuario es la RESPUESTA a esa pregunta.
+
+  **CASO DETECTADO: DESAMBIGUANDO DUPLICADOS**
+  - **Detección:** Tu pregunta previa (-1) fue: "El ítem 'X' existe en varias carpetas: ... ¿A cuál corresponde?"
+  - **Acción:** La respuesta actual del usuario es la SECCIÓN (Carpeta).
+  - **Extracción Crítica:** Debes mirar el mensaje del usuario de hace DOS turnos (-2) para recuperar el monto, concepto e intención original (ej: "agrerga 400 a play").
+  - **Resultado:** Genera `intent="CREATE"`, `amount`=monto_del_pasado, `category`="item_del_pasado", `section`=(Respuesta actual del usuario).
+
+  **CASO DETECTADO: CREANDO NUEVA CARPETA**
+  ... (Se mantiene flujo de creación de carpeta e ítem) ...
+
+--- SI NO HAY PREGUNTA PENDIENTE, EVALÚA: ---
+
+## 3. REGISTRO DE GASTOS (GASTO vs PRESUPUESTO)
+- **EL VERBO "AGREGAR" ES SIEMPRE GASTO:** 
+  * "Agrega 300", "agrerga 200", "pon 500", "suma 100", "gasto", "compré" -> **SIEMPRE son `intent="CREATE"` (GASTO NUEVO).**
+  * **PROHIBICIÓN TOTAL:** NUNCA uses `intent="UPDATE_CATEGORY"` para estos verbos aunque el ítem tenga presupuesto. Cada "agrega" es un gasto que se resta del presupuesto disponible, NO una edición del presupuesto mismo.
+  * **ÚNICA EXCEPCIÓN:** Solo usa `intent="UPDATE_CATEGORY"` si la frase contiene literalmente la palabra **"PRESUPUESTO"** o **"SALDO"** (ej: "Aumenta el presupuesto de X a 5000", "Cambia el saldo de Y").
+- **VERIFICACIÓN DE DUPLICADOS:**
+  * Si el ítem existe en >1 carpeta y el usuario no dijo cuál:
+    - **INTENT: TALK**.
+    - **TEXTO OBLIGATORIO:** "El ítem 'X' existe en varias carpetas: 'Carpeta1', 'Carpeta2'. ¿A cuál corresponde?"
+
+## 4. OTRAS INTENCIONES (RESUMEN)
+- `DELETE_CATEGORY`: Solo si dice "borra", "elimina" la carpeta o ítem.
+- `UPDATE_CATEGORY`: Solo para RENOMBRAR, MOVER o cambiar literalmente el SALDO/PRESUPUESTO.
+- `CREATE_COMMITMENT`: "Debo", "Me deben".
+
+────────────────────────
+FORMATO JSON DE SALIDA
+────────────────────────
+{{
+  "intent": "CREATE | UPDATE | DELETE | TALK | CREATE_CATEGORY | UPDATE_CATEGORY | ...",
+  "section": "Carpeta",
+  "category": "Item",
+  "amount": 0,
+  "concept": "",
+  "response_text": "Texto respuesta."
+}}
+
+MENSANJE DEL USUARIO:
+"{message}"
     """
 
     # --- INTENTAR OPENAI PRIMERO SI HAY KEY ---
@@ -94,7 +142,7 @@ def process_finance_message(db: Session, user_id: int, message: str):
 
     try:
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # Formato correcto sin models/
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         text_response = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text_response)
@@ -102,12 +150,16 @@ def process_finance_message(db: Session, user_id: int, message: str):
     except Exception as e:
         error_msg = str(e)
         if "429" in error_msg or "ResourceExhausted" in error_msg:
-            return {"status": "error", "message": "Lúcio está agotado (Límite de Google). Por favor, configura tu OPENAI_API_KEY para evitar esto."}
+            return {"status": "error", "message": "Lúcio está agotado (Límite de Google)."}
         return {"status": "error", "message": "Error técnico: " + error_msg}
 
-def _normalize_ai_data(data: dict):
-    if data.get("intent") == "CREATE":
-        if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
-        if not data.get("section"): data["section"] = "OTROS"
-        if not data.get("payment_method"): data["payment_method"] = "Débito"
+def _normalize_ai_data(data):
+    if isinstance(data, list):
+        return [_normalize_ai_data(item) for item in data]
+        
+    if isinstance(data, dict):
+        if data.get("intent") == "CREATE":
+            if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
+            if not data.get("section"): data["section"] = "OTROS"
+            if not data.get("payment_method"): data["payment_method"] = "Débito"
     return data

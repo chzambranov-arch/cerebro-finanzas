@@ -1,7 +1,25 @@
 const CONFIG = {
-    // Force relative path for maximum compatibility on local/LAN/Prod
-    API_BASE: '/api/v1',
+    // Force absolute path if running from file system (double click index.html)
+    API_BASE: window.location.protocol === 'file:'
+        ? 'http://localhost:8003/api/v1'
+        : '/api/v1',
+    POLL_INTERVAL: 30000,
+    VAPID_PUBLIC_KEY: 'BO8yC-brgiP_8TYicNkmpYlQ9a8qGtDLFAtZlA8_DH17MxyXCVFFdu2qQhjvHHQvmesm-DDXY49DcUOh5ekIa6c'
 };
+
+if (window.location.protocol === 'file:') {
+    document.body.innerHTML = `
+        <div style="padding: 20px; font-family: sans-serif; text-align: center; margin-top: 50px;">
+            <h1 style="color: #ef4444; font-size: 2rem;">⚠️ MODO DE ACCESO INCORRECTO</h1>
+            <p style="font-size: 1.2rem; margin-bottom: 20px;">Estás abriendo el archivo localmente. Esto bloquea la conexión por seguridad.</p>
+            <p>Por favor, haz clic aquí para entrar correctamente:</p>
+            <a href="http://localhost:8003" style="font-size: 2.5rem; color: #3b82f6; font-weight: bold; text-decoration: underline;">ENTRAR AL SISTEMA</a>
+        </div>
+    `;
+    // Stop execution
+    throw new Error("Local file access constrained");
+}
+const CURRENT_VERSION = 'v3.0.46-debug';
 console.log('App Config:', CONFIG);
 
 class FinanceApp {
@@ -67,23 +85,59 @@ class FinanceApp {
 
         if (this.token) {
             this.hideLogin();
-            this.refreshData();
+            this.refreshData().catch(() => {
+                console.log("Token invalid or server down, forcing login");
+                this.showLogin();
+            });
+            this.initPushNotifications();
+            this.updatePushButton();
         } else {
             this.showLogin();
         }
     }
 
+
     async refreshData() {
         console.log('[DEBUG] Refreshing all data...');
-        await this.loadDashboard();
-        // Small delay to ensure DB sync is settled and UI can breathe
-        setTimeout(async () => {
-            await this.loadExpenses();
-            if (this.currentView === 'compromisos') {
-                await this.loadCompromisos();
+        try {
+            await this.loadDashboard();
+            // Small delay to ensure DB sync is settled and UI can breathe
+            setTimeout(async () => {
+                await this.loadExpenses();
+                if (this.currentView === 'compromisos') {
+                    await this.loadCompromisos();
+                }
+                // Proactive check from Lúcio
+                if (this.checkPendingGasto) {
+                    setTimeout(() => this.checkPendingGasto(), 1000);
+                }
+            }, 300);
+        } catch (e) {
+            console.error('[CRITICAL] Failed to refresh data:', e);
+
+            // Show visible error
+            const syncEl = document.getElementById('sync-time');
+            if (syncEl) {
+                syncEl.textContent = "Error";
+                syncEl.style.color = "red";
             }
-        }, 300);
+
+            // Create or update debugging banner
+            let banner = document.getElementById('debug-banner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'debug-banner';
+                banner.style.cssText = "position:fixed; bottom:0; left:0; width:100%; background:rgba(255,0,0,0.9); color:white; font-size:12px; padding:10px; z-index:99999; text-align:center;";
+                document.body.appendChild(banner);
+            }
+            banner.innerHTML = `CONN ERROR: ${e.message} <br> API: ${CONFIG.API_BASE} <br> <button onclick="location.reload(true)">RECARGAR</button>`;
+
+            if (e.message && e.message.includes('401')) {
+                this.showLogin();
+            }
+        }
     }
+
 
     setupNavigation() {
         const navItems = document.querySelectorAll('.nav-item');
@@ -134,7 +188,8 @@ class FinanceApp {
             const input = document.getElementById('global-budget-input');
             if (input) input.value = this.dashboardData.monthly_budget;
         }
-        document.getElementById('app-version-display').textContent = CURRENT_VERSION;
+        const versionEl = document.getElementById('app-version-display');
+        if (versionEl) versionEl.textContent = `Cerebro App ${CURRENT_VERSION} (Lúcio AI)`;
 
         // Restore toggle states
         const themeToggle = document.getElementById('toggle-dark-mode');
@@ -142,6 +197,40 @@ class FinanceApp {
 
         const alertToggle = document.getElementById('toggle-smart-alerts');
         if (alertToggle) alertToggle.checked = localStorage.getItem('smart_alerts') !== 'false';
+
+        // Update push button status
+        this.updatePushButton();
+    }
+
+    async updatePushButton() {
+        const btnPush = document.getElementById('btn-enable-push');
+        if (!btnPush) return;
+
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            btnPush.textContent = 'No soportado';
+            btnPush.disabled = true;
+            return;
+        }
+
+        try {
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.getSubscription();
+
+            if (subscription) {
+                btnPush.textContent = '✓ Activo';
+                btnPush.disabled = true;
+                btnPush.classList.add('active-push'); // Optional: for styling
+                btnPush.style.backgroundColor = '#d1fae5';
+                btnPush.style.color = '#059669';
+                btnPush.style.borderColor = '#10b981';
+            } else {
+                btnPush.textContent = 'Activar';
+                btnPush.disabled = false;
+                btnPush.style = ''; // Reset inline styles
+            }
+        } catch (e) {
+            console.error('Error checking push status:', e);
+        }
     }
 
     setupSettings() {
@@ -203,6 +292,28 @@ class FinanceApp {
 
                     // 3. Reload from server
                     window.location.reload(true);
+                }
+            });
+        }
+
+        const btnPush = document.getElementById('btn-enable-push');
+        if (btnPush) {
+            btnPush.addEventListener('click', async () => {
+                btnPush.textContent = 'Tratando...';
+                btnPush.disabled = true;
+                try {
+                    await this.initPushNotifications();
+                    this.updatePushButton();
+                } catch (e) {
+                    console.error('Push error:', e);
+                    if (e.message.includes('denegado') || e.message.includes('denied') || e.message.includes('permission')) {
+                        alert('⚠️ Permiso bloqueado por el navegador.\n\nPara arreglarlo:\n1. Haz clic en el ícono de "candado" o "ajustes" 🔒 a la izquierda de la URL (localhost).\n2. Busca "Notificaciones" o "Permisos".\n3. Cambia a "Permitir" o haz clic en "Restablecer permisos".\n4. Recarga la página.');
+                    } else {
+                        alert(`Error al activar notificaciones: ${e.message}`);
+                    }
+                    btnPush.textContent = '🔒 Bloqueado';
+                    // Reset button after 3 seconds so user can try again
+                    setTimeout(() => this.updatePushButton(), 3000);
                 }
             });
         }
@@ -410,6 +521,7 @@ class FinanceApp {
                 localStorage.setItem('auth_token', this.token);
                 this.hideLogin();
                 await this.refreshData();
+                this.initPushNotifications();
             } else {
                 errorDiv.textContent = 'Credenciales inválidas';
             }
@@ -429,13 +541,13 @@ class FinanceApp {
             });
             if (response.ok) {
                 const data = await response.json();
+                console.log('[DEBUG] Dashboard Data:', data);
                 this.dashboardData = data;
                 try {
                     this.renderDashboard(data);
                 } catch (renderError) {
                     console.error('Render Error:', renderError);
-                    document.getElementById('sync-time').textContent = "Err Render";
-                    // alert(`Debug: ${renderError.message}`); // Optional debug
+                    document.getElementById('sync-time').textContent = `Err: ${renderError.message}`;
                 }
             } else if (response.status === 401) {
                 this.showLogin();
@@ -449,14 +561,16 @@ class FinanceApp {
     }
 
     renderDashboard(data) {
+        console.log('[DEBUG] Rendering Dashboard');
         const user = data.user_name || "Usuario";
         const greeting = document.getElementById('greeting-text');
         if (greeting) greeting.textContent = `Hola, ${user} 👋`;
 
         const balance = document.getElementById('available-balance');
-        // Safety check for nulls
+        // Safety check for nulls (ensure number)
         const availableBal = data.available_balance ?? 0;
         const monthlyBud = data.monthly_budget ?? 0;
+        console.log('[DEBUG] Bal:', availableBal, 'Bud:', monthlyBud);
 
         if (balance) balance.textContent = `$${availableBal.toLocaleString()}`;
 
@@ -467,10 +581,14 @@ class FinanceApp {
         if (syncTime) syncTime.textContent = new Date().toLocaleTimeString();
 
         const container = document.getElementById('categories-container');
-        if (!container) return;
+        if (!container) {
+            console.error('[ERRO] Categories Container NOT FOUND');
+            return;
+        }
         container.innerHTML = '';
 
         this.sectionsData = data.categories || {};
+        console.log('[DEBUG] Sections:', this.sectionsData);
         this.updateModalCategories();
 
         Object.entries(this.sectionsData).forEach(([name, sec]) => {
@@ -515,6 +633,36 @@ class FinanceApp {
         `;
         addCard.addEventListener('click', () => this.handleAddSection());
         container.appendChild(addCard);
+    }
+
+    updateModalCategories() {
+        const sectionSelect = document.getElementById('section-select');
+        if (!sectionSelect) return;
+        const currentSec = sectionSelect.value;
+        sectionSelect.innerHTML = '<option value="">Selecciona Sección...</option>';
+        Object.keys(this.sectionsData).forEach(sec => {
+            const opt = document.createElement('option');
+            opt.value = sec;
+            opt.textContent = sec;
+            sectionSelect.appendChild(opt);
+        });
+        if (currentSec) sectionSelect.value = currentSec;
+        this.updateSubcategories();
+    }
+
+    updateSubcategories() {
+        const sectionSelect = document.getElementById('section-select');
+        const categorySelect = document.getElementById('category');
+        const selectedSec = sectionSelect.value;
+        categorySelect.innerHTML = '<option value="">Selecciona Categoría...</option>';
+        if (selectedSec && this.sectionsData[selectedSec]) {
+            Object.keys(this.sectionsData[selectedSec].categories).forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat;
+                opt.textContent = cat;
+                categorySelect.appendChild(opt);
+            });
+        }
     }
 
     getIconForSection(name) {
@@ -785,35 +933,7 @@ class FinanceApp {
         this.toggleBodyModal(true);
     }
 
-    updateModalCategories() {
-        const sectionSelect = document.getElementById('section-select');
-        if (!sectionSelect) return;
-        const currentSec = sectionSelect.value;
-        sectionSelect.innerHTML = '<option value="">Selecciona Sección...</option>';
-        Object.keys(this.sectionsData).forEach(sec => {
-            const opt = document.createElement('option');
-            opt.value = sec;
-            opt.textContent = sec;
-            sectionSelect.appendChild(opt);
-        });
-        if (currentSec) sectionSelect.value = currentSec;
-        this.updateSubcategories();
-    }
 
-    updateSubcategories() {
-        const sectionSelect = document.getElementById('section-select');
-        const categorySelect = document.getElementById('category');
-        const selectedSec = sectionSelect.value;
-        categorySelect.innerHTML = '<option value="">Selecciona Categoría...</option>';
-        if (selectedSec && this.sectionsData[selectedSec]) {
-            Object.keys(this.sectionsData[selectedSec].categories).forEach(cat => {
-                const opt = document.createElement('option');
-                opt.value = cat;
-                opt.textContent = cat;
-                categorySelect.appendChild(opt);
-            });
-        }
-    }
 
     async loadExpenses() {
         console.log('[DEBUG] Loading expenses...');
@@ -1327,6 +1447,65 @@ class FinanceApp {
                 btn.textContent = '🔃 Sincronizar Ahora';
             }
         }
+    }
+
+    async initPushNotifications() {
+        console.log('[PUSH] Iniciando activación...');
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            console.warn('Push not supported on this browser.');
+            throw new Error('Push no soportado en este navegador');
+        }
+
+        try {
+            console.log('[PUSH] Solicitando permiso...');
+            const permission = await Notification.requestPermission();
+            console.log('[PUSH] Permiso:', permission);
+            if (permission !== 'granted') {
+                throw new Error('Permiso de notificaciones denegado');
+            }
+
+            console.log('[PUSH] Esperando Service Worker ready...');
+            // Timeout de 5s para el ready
+            const registration = await Promise.race([
+                navigator.serviceWorker.ready,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de Service Worker')), 5000))
+            ]);
+
+            console.log('[PUSH] Suscribiendo al servidor de push...');
+            const subscribeOptions = {
+                userVisibleOnly: true,
+                applicationServerKey: this.urlBase64ToUint8Array(CONFIG.VAPID_PUBLIC_KEY)
+            };
+
+            const subscription = await registration.pushManager.subscribe(subscribeOptions);
+            console.log('[PUSH] Suscripción obtenida:', subscription);
+
+            const response = await fetch(`${CONFIG.API_BASE}/agent/push-subscribe`, {
+                method: 'POST',
+                headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(subscription)
+            });
+
+            if (!response.ok) {
+                throw new Error('Error al guardar suscripción en el servidor');
+            }
+
+            console.log('Push Subscription saved.');
+        } catch (error) {
+            console.error('Push error detailed:', error);
+            throw error; // Re-throw to handle in the UI
+        }
+    }
+
+    urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
     }
 }
 

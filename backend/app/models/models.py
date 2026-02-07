@@ -73,3 +73,12 @@ class DaySignature(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("tecnico_nombre", "fecha", name="_tech_date_uc"),)
+
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role = Column(String, nullable=False)  # "user" or "assistant"
+    message = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)

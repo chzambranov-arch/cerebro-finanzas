@@ -752,3 +752,29 @@ def update_expense_in_sheet(old_data: dict, new_data: dict, tech_name: str):
     except Exception as e:
         print(f"ERROR [SHEETS] Update expense in sheet failed: {e}")
         return False
+
+def clear_expenses_sheet():
+    """
+    Clears all content from the 'Gastos' sheet, keeping only the header.
+    """
+    print("DEBUG [SHEETS] Clearing 'Gastos' sheet...")
+    try:
+        sheet = get_sheet()
+        if not sheet: return False
+        
+        try:
+            ws = sheet.worksheet("Gastos")
+            ws.clear()
+            # Re-add header
+            ws.append_row(["Fecha", "Concepto", "Sección", "Categoría", "Monto", "Método Pago", "Usuario", "Imagen URL"])
+            print("DEBUG [SHEETS] 'Gastos' sheet cleared and header restored.")
+            return True
+        except gspread.WorksheetNotFound:
+            print("DEBUG [SHEETS] 'Gastos' sheet not found, nothing to clear.")
+            return True # Technically success
+        except Exception as e:
+            print(f"ERROR [SHEETS] Clear 'Gastos' failed: {e}")
+            return False
+    except Exception as e:
+        print(f"ERROR [SHEETS] Clear sheet failed: {e}")
+        return False

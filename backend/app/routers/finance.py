@@ -244,30 +244,31 @@ def get_finance_dashboard(
     has_budget = db.query(Budget).filter(Budget.user_id == current_user.id).first()
     has_categories = db.query(Category).filter(Category.user_id == current_user.id).first()
     
-    if not has_budget:
-        print(f"[AUTO-INIT] Creating default budget for user {current_user.id}")
-        update_monthly_budget(db, current_user.id, 500000)
+    # [AUTO-INIT DISABLED FOR CLEAN SLATE TESTING]
+    # if not has_budget:
+    #     print(f"[AUTO-INIT] Creating default budget for user {current_user.id}")
+    #     update_monthly_budget(db, current_user.id, 500000)
     
-    if not has_categories:
-        print(f"[AUTO-INIT] Creating default categories for user {current_user.id}")
-        initialize_default_categories(db, current_user.id)
+    # if not has_categories:
+    #     print(f"[AUTO-INIT] Creating default categories for user {current_user.id}")
+    #     initialize_default_categories(db, current_user.id)
         
-        # Actualizar con presupuestos reales
-        categories_with_budget = [
-            ("CASA", "Arriendo", 200000),
-            ("CASA", "Servicios", 50000),
-            ("CASA", "Supermercado", 100000),
-            ("FAMILIA", "Salud", 30000),
-            ("FAMILIA", "Educación", 20000),
-            ("TRANSPORTE", "Bencina", 40000),
-            ("TRANSPORTE", "Uber", 20000),
-        ]
+    #     # Actualizar con presupuestos reales
+    #     categories_with_budget = [
+    #         ("CASA", "Arriendo", 200000),
+    #         ("CASA", "Servicios", 50000),
+    #         ("CASA", "Supermercado", 100000),
+    #         ("FAMILIA", "Salud", 30000),
+    #         ("FAMILIA", "Educación", 20000),
+    #         ("TRANSPORTE", "Bencina", 40000),
+    #         ("TRANSPORTE", "Uber", 20000),
+    #     ]
         
-        for section, category, budget in categories_with_budget:
-            try:
-                update_category_in_db(db, current_user.id, section, category, new_budget=budget)
-            except:
-                pass  # Ignorar si falla
+    #     for section, category, budget in categories_with_budget:
+    #         try:
+    #             update_category_in_db(db, current_user.id, section, category, new_budget=budget)
+    #         except:
+    #             pass  # Ignorar si falla
     
     data = get_dashboard_data_from_db(db, current_user.id)
     return data
@@ -414,3 +415,42 @@ def sync_gmail_endpoint(
         raise HTTPException(status_code=400, detail=result["detail"])
         
     return result
+
+@router.post("/reset-data")
+def reset_all_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    NUCLEAR OPTION: Resets all financial data to 0.
+    1. Deletes all local expenses.
+    2. Clears 'Gastos' sheet in Google Sheets.
+    3. Resets monthly budget to 0 (Local & Sheet).
+    """
+    from app.services.sheets_service import clear_expenses_sheet, update_monthly_budget as update_sheet_budget
+    from app.services.db_service import update_monthly_budget
+    from app.models.finance import Expense
+    
+    try:
+        # 1. Delete Local Expenses
+        num_deleted = db.query(Expense).delete()
+        
+        # 2. Reset Local Budget
+        update_monthly_budget(db, current_user.id, 0)
+        
+        db.commit()
+        print(f"DEBUG [RESET] Deleted {num_deleted} local expenses and reset budget.")
+        
+        # 3. Clear Sheets (Best Effort)
+        try:
+            clear_expenses_sheet()
+            update_sheet_budget(0)
+        except Exception as e:
+            print(f"WARNING [RESET] Failed to clear sheets completely: {e}")
+            
+        return {"message": "All data has been reset to 0.", "deleted_count": num_deleted}
+        
+    except Exception as e:
+        db.rollback()
+        print(f"ERROR [RESET] Failed to reset data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

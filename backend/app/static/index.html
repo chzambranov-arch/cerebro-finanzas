@@ -222,12 +222,15 @@
                     </label>
                 </div>
 
-                <div class="card setting-card row-card" style="opacity: 0.7;">
+                <div class="card setting-card row-card">
                     <div class="row-info">
-                        <h3>Alertas Inteligentes</h3>
-                        <p>Notificaciones push al 80%</p>
+                        <h3>Alertas de Lúcio (Push)</h3>
+                        <p>Recibe avisos de gastos por email</p>
                     </div>
-                    <span class="badge-coming-soon">Pronto</span>
+                    <button id="btn-enable-push" class="btn-primary-outline"
+                        style="padding: 8px 12px; font-size: 0.8rem;">
+                        Activar
+                    </button>
                 </div>
 
                 <!-- 3. IA & Automatización -->
@@ -271,9 +274,9 @@
                     🔄 Restablecer App (Forzar Actualización)
                 </button>
 
-                <div class="app-version"
+                <div class="app-version" id="app-version-display"
                     style="text-align: center; margin-top: 30px; color: var(--text-muted); font-size: 0.8rem;">
-                    Cerebro App v3.0.42 (Lúcio AI)
+                    Cerebro App v3.0.45 (Lúcio AI)
                 </div>
             </div>
         </section>
@@ -501,29 +504,20 @@
     </div>
     <link rel="stylesheet" href="/static/chat.css?v=1.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/app.js?v=4.0.2"></script>
+    <script src="/static/app.js?v=4.0.3"></script>
     <script src="/static/chat.js?v=1.0"></script>
     </script>
     <script>
-        // SERVICE WORKERS TEMPORARILY DISABLED FOR DEBUG
-        console.log('Service Workers disabled for debugging');
-
-        // Clear any existing caches and service workers
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function (registrations) {
-                for (let registration of registrations) {
-                    registration.unregister();
-                    console.log('Unregistered SW:', registration);
-                }
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('Service Worker registrado:', reg.scope))
+                    .catch(err => {
+                        console.error('Error al registrar SW:', err);
+                        alert(`Error crítico: No se pudo registrar el Service Worker.\n${err.message}`);
+                    });
             });
         }
-
-        caches.keys().then(names => {
-            for (let name of names) {
-                caches.delete(name);
-                console.log('Deleted cache:', name);
-            }
-        });
     </script>
 </body>
 

@@ -54,10 +54,11 @@ def get_categories_with_budget(db: Session, user_id: int) -> Dict[str, List[Dict
     
     result = {}
     for cat in categories:
-        if cat.section not in result:
-            result[cat.section] = []
-        result[cat.section].append({
-            "name": cat.name,
+        sec_name = cat.section.strip().upper()
+        if sec_name not in result:
+            result[sec_name] = []
+        result[sec_name].append({
+            "name": cat.name.strip(),
             "budget": cat.budget
         })
     
@@ -144,6 +145,9 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
 
 def add_category_to_db(db: Session, user_id: int, section: str, category: str, budget: int = 0) -> bool:
     """Agrega una nueva categoría a la base de datos"""
+    section = section.strip().upper()
+    category = category.strip()
+    
     existing = db.query(Category).filter(
         Category.user_id == user_id,
         Category.section == section,
@@ -164,32 +168,83 @@ def add_category_to_db(db: Session, user_id: int, section: str, category: str, b
     return True
 
 
-def update_category_in_db(db: Session, user_id: int, section: str, old_name: str, 
-                          new_name: Optional[str] = None, new_budget: Optional[int] = None) -> bool:
-    """Actualiza una categoría en la base de datos"""
-    category = db.query(Category).filter(
-        Category.user_id == user_id,
-        Category.section == section,
-        Category.name == old_name
-    ).first()
-    
-    if not category:
-        return False
-    
-    if new_name:
-        category.name = new_name
-        # Actualizar gastos históricos
+def update_category_in_db(db: Session, user_id: int, section: str, 
+                          category: Optional[str] = None, 
+                          new_name: Optional[str] = None, 
+                          new_budget: Optional[int] = None,
+                          new_section: Optional[str] = None,
+                          target_type: str = "CATEGORY") -> bool:
+    section = section.strip().upper()
+    if category: category = category.strip()
+    if new_name: new_name = new_name.strip()
+    if new_section: new_section = new_section.strip().upper()
+
+    # 1. RENOMBRAR SECCIÓN COMPLETA
+    if target_type == "SECTION":
+        if not new_name: return False
+        
+        # Buscar todas las categorías de esta sección
+        cats = db.query(Category).filter(
+            Category.user_id == user_id,
+            Category.section == section
+        ).all()
+        
+        if not cats: return False
+        
+        # Actualizar nombre de sección en Categorías
+        for c in cats:
+            c.section = new_name
+            
+        # Actualizar histórico de Gastos
         db.query(Expense).filter(
             Expense.user_id == user_id,
-            Expense.section == section,
-            Expense.category == old_name
-        ).update({"category": new_name})
-    
-    if new_budget is not None:
-        category.budget = new_budget
-    
-    db.commit()
-    return True
+            Expense.section == section
+        ).update({"section": new_name})
+        
+        db.commit()
+        return True
+
+    # 2. ACTUALIZAR SUBCATEGORÍA (Nombre, Presupuesto o Mover de Carpeta)
+    else:
+        if not category: return False
+        
+        cat_obj = db.query(Category).filter(
+            Category.user_id == user_id,
+            Category.section.ilike(section),
+            Category.name.ilike(category)
+        ).first()
+        
+        if not cat_obj: return False
+        
+        # A. Renombrar
+        if new_name:
+            # Actualizar gastos históricos antes de cambiar el nombre del objeto
+            db.query(Expense).filter(
+                Expense.user_id == user_id,
+                Expense.section == section,
+                Expense.category == category
+            ).update({"category": new_name})
+            cat_obj.name = new_name
+            
+        # B. Cambiar Presupuesto
+        if new_budget is not None:
+            cat_obj.budget = new_budget
+            
+        # C. Mover a otra Carpeta (Sección)
+        if new_section:
+            # Actualizar gastos históricos
+            # Nota: Si ya se renombró arriba, usamos new_name, sino category original
+            current_cat_name = new_name if new_name else category
+            db.query(Expense).filter(
+                Expense.user_id == user_id,
+                Expense.section == section,
+                Expense.category == current_cat_name
+            ).update({"section": new_section})
+            
+            cat_obj.section = new_section
+
+        db.commit()
+        return True
 
 
 def delete_category_from_db(db: Session, user_id: int, section: str, category: str) -> bool:
@@ -197,8 +252,8 @@ def delete_category_from_db(db: Session, user_id: int, section: str, category: s
     # Verificar que no tenga gastos asociados
     has_expenses = db.query(Expense).filter(
         Expense.user_id == user_id,
-        Expense.section == section,
-        Expense.category == category
+        Expense.section.ilike(section),
+        Expense.category.ilike(category)
     ).first()
     
     if has_expenses:
@@ -206,8 +261,8 @@ def delete_category_from_db(db: Session, user_id: int, section: str, category: s
     
     cat = db.query(Category).filter(
         Category.user_id == user_id,
-        Category.section == section,
-        Category.name == category
+        Category.section.ilike(section),
+        Category.name.ilike(category)
     ).first()
     
     if cat:

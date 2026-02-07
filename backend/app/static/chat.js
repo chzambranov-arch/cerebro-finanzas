@@ -67,10 +67,17 @@
                 if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
                 else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
 
+                const payload = { message: msgText };
+                if (this.activePendingId) {
+                    payload.pending_id = this.activePendingId;
+                    // Reset after sending to not reuse it accidentally
+                    this.activePendingId = null;
+                }
+
                 const response = await fetch(`${apiBase}/agent/chat`, {
                     method: 'POST',
                     headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: msgText })
+                    body: JSON.stringify(payload)
                 });
 
                 // Remove thinking
@@ -168,6 +175,38 @@
             `;
             container.appendChild(cardDiv);
             container.scrollTop = container.scrollHeight;
+        },
+
+        checkPendingGasto: async function () {
+            console.log("Checking for pending expenses from mail...");
+            try {
+                let apiBase = '/api/v1';
+                if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
+                else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
+
+                const response = await fetch(`${apiBase}/agent/check-pending`, {
+                    headers: this.getHeaders()
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.intent === 'ASK_CATEGORY') {
+                        // 1. Store the pending ID to send it later
+                        this.activePendingId = data.pending_id;
+
+                        // 2. Open chat if closed
+                        const overlay = document.getElementById('chat-overlay');
+                        if (overlay && !overlay.classList.contains('active')) {
+                            this.toggleChat();
+                        }
+
+                        // 3. Lúcio speaks
+                        this.addChatMessage(data.message, 'bot');
+                    }
+                }
+            } catch (e) {
+                console.error("Error in checkPendingGasto:", e);
+            }
         }
     });
 

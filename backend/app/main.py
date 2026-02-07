@@ -8,8 +8,8 @@ load_dotenv()
 from app.core.config import settings
 from app.database import engine, Base
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, users, finance, commitments, setup, agent
-from app.models.finance import Expense  # Import to register with Base
+from app.routers import auth, users, finance, commitments, setup, agent, webhooks
+from app.models.finance import Expense, Commitment, PendingExpense  # Import to register with Base
 from app.models.budget import Budget, Category, AppConfig  # Import budget models
 
 # Create tables on startup (simple for MVP)
@@ -70,6 +70,7 @@ app.include_router(finance.router, prefix=f"{settings.API_V1_STR}/expenses", tag
 app.include_router(commitments.router, prefix=f"{settings.API_V1_STR}/commitments", tags=["commitments"])
 app.include_router(setup.router, prefix=f"{settings.API_V1_STR}/setup", tags=["setup"])
 app.include_router(agent.router, prefix=f"{settings.API_V1_STR}/agent", tags=["agent"])
+app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
 
 from fastapi.responses import FileResponse
 
@@ -90,6 +91,10 @@ def debug_deploy():
 
 @app.get("/")
 def read_root():
+    return FileResponse("app/static/index.html")
+
+@app.get("/index.html")
+def read_index_html():
     return FileResponse("app/static/index.html")
 
 @app.get("/analytics")
