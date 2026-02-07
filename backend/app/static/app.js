@@ -1,7 +1,7 @@
 const CONFIG = {
     // Force absolute path if running from file system (double click index.html)
     API_BASE: window.location.protocol === 'file:'
-        ? 'http://localhost:8003/api/v1'
+        ? 'http://localhost:8004/api/v1'
         : '/api/v1',
     POLL_INTERVAL: 30000,
     VAPID_PUBLIC_KEY: 'BO8yC-brgiP_8TYicNkmpYlQ9a8qGtDLFAtZlA8_DH17MxyXCVFFdu2qQhjvHHQvmesm-DDXY49DcUOh5ekIa6c'
@@ -13,7 +13,7 @@ if (window.location.protocol === 'file:') {
             <h1 style="color: #ef4444; font-size: 2rem;">⚠️ MODO DE ACCESO INCORRECTO</h1>
             <p style="font-size: 1.2rem; margin-bottom: 20px;">Estás abriendo el archivo localmente. Esto bloquea la conexión por seguridad.</p>
             <p>Por favor, haz clic aquí para entrar correctamente:</p>
-            <a href="http://localhost:8003" style="font-size: 2.5rem; color: #3b82f6; font-weight: bold; text-decoration: underline;">ENTRAR AL SISTEMA</a>
+            <a href="http://localhost:8004" style="font-size: 2.5rem; color: #3b82f6; font-weight: bold; text-decoration: underline;">ENTRAR AL SISTEMA</a>
         </div>
     `;
     // Stop execution
