@@ -104,6 +104,11 @@ REGLAS MAESTRAS DE EJECUCIÓN (ORDEN DE PRIORIDAD)
 - `DELETE_CATEGORY`: Solo si dice "borra", "elimina" la carpeta o ítem.
 - `UPDATE_CATEGORY`: Solo para RENOMBRAR, MOVER o cambiar literalmente el SALDO/PRESUPUESTO.
 - `CREATE_COMMITMENT`: "Debo", "Me deben".
+  * **REGLA DE CAMPOS:** 
+    - `category`: Nombre de la PERSONA (ej: "Mama", "El Panda").
+    - `concept`: Razón o NOTA (ej: "un macdonal", "cervezas").
+    - `amount`: Monto total.
+    - `commitment_type`: "DEBT" (si el usuario debe) o "LOAN" (si le deben).
 
 ────────────────────────
 FORMATO JSON DE SALIDA
@@ -111,15 +116,17 @@ FORMATO JSON DE SALIDA
 {{
   "intent": "CREATE | UPDATE | DELETE | TALK | CREATE_CATEGORY | UPDATE_CATEGORY | ...",
   "section": "Carpeta",
-  "category": "Item",
+  "category": "Persona o Item",
   "amount": 0,
-  "concept": "",
+  "concept": "Razón o Nota",
   "response_text": "Texto respuesta."
 }}
 
 MENSANJE DEL USUARIO:
 "{message}"
     """
+
+    # --- (rest of the logic) ---
 
     # --- INTENTAR OPENAI PRIMERO SI HAY KEY ---
     if openai_key and len(openai_key) > 10:
@@ -161,8 +168,4 @@ def _normalize_ai_data(data):
         if data.get("intent") == "CREATE":
             if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
             if not data.get("section"): data["section"] = "OTROS"
-        elif data.get("intent") == "CREATE_COMMITMENT":
-            # Asegurar que el concepto capture la nota mini del usuario
-            if not data.get("concept") and data.get("category"):
-                data["concept"] = data["category"]
     return data

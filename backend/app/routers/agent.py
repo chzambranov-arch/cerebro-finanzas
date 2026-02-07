@@ -227,9 +227,16 @@ def chat_with_agent(
                         c_date = datetime.strptime(raw_date, "%Y-%m-%d")
                     except ValueError: pass
 
+                # Si hay concepto y categoría (y son distintos), unirlos para la "mini nota"
+                concept = data.get("concept")
+                cat = data.get("category")
+                c_title = concept or cat or "Compromiso"
+                if concept and cat and concept.lower().strip() != cat.lower().strip():
+                    c_title = f"{concept} - {cat}"
+
                 new_comm = Commitment(
                     user_id=current_user.id,
-                    title=data.get("concept") or data.get("category") or "Compromiso",
+                    title=c_title,
                     type=data.get("commitment_type", "DEBT"), 
                     total_amount=int(data.get("amount", 0)),
                     paid_amount=0,
