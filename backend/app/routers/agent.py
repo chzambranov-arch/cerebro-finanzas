@@ -146,6 +146,10 @@ def chat_with_agent(
             data["category"] = data["category"].split("->")[-1].strip().strip("[]")
         if data.get("section"):
             data["section"] = data["section"].strip().strip("[]")
+        if data.get("new_section"):
+            data["new_section"] = data["new_section"].strip().strip("[]")
+        if data.get("new_name"):
+            data["new_name"] = data["new_name"].strip().strip("[]")
         
         if pending_ref and data.get("category") and data.get("section"):
             data["amount"] = pending_ref.amount
@@ -220,6 +224,35 @@ def chat_with_agent(
         # D. CREAR COMPROMISO
         elif intent == "CREATE_COMMITMENT":
             try:
+                # --- VALIDACIÓN ESTRICTA DE COMPROMISOS ---
+                # El usuario exige: QUIÉN (category), CUÁNTO (amount) y QUÉ (concept).
+                # Si falta el concept o es genérico, RECHAZAMOS la creación y preguntamos.
+                
+                amount = int(data.get("amount", 0))
+                person = data.get("category")
+                concept = data.get("concept")
+                
+                # Lista negra de conceptos genéricos (incluyendo posibles placeholders de la IA)
+                generic_concepts = [
+                    "deuda", "prestamo", "préstamo", "deuda pendiente", "compromiso", "pendiente", 
+                    "gasto", "dinero", "plata", "efectivo", "transferencia", "de deudas", "de deuda",
+                    "me debe", "le debo", "debo", "debe", "pagar", "pago",
+                    "<user_message>", "texto_mensaje_actual", "usar_el_contenido_del_mensaje_usuario"
+                ]
+                
+                # Normalización para chequeo
+                concept_clean = concept.lower().strip() if concept else ""
+                is_concept_invalid = not concept or concept_clean in generic_concepts or len(concept_clean) < 2
+                
+                if not person or amount <= 0 or is_concept_invalid:
+                    missing = []
+                    if not person: missing.append("quién")
+                    if amount <= 0: missing.append("cuánto")
+                    if is_concept_invalid: missing.append("por qué concepto (motivo específico)")
+                    
+                    aggregated_responses.append(f"🛑 Faltan datos para el compromiso: {', '.join(missing)}. ¿Podrías completarlo?")
+                    continue # RECHAZO TOTAL: No guarda en DB
+                    
                 c_date = datetime.utcnow()
                 raw_date = data.get("date")
                 if raw_date:
@@ -227,12 +260,10 @@ def chat_with_agent(
                         c_date = datetime.strptime(raw_date, "%Y-%m-%d")
                     except ValueError: pass
 
-                # Si hay concepto y categoría (y son distintos), unirlos para la "mini nota"
-                concept = data.get("concept")
-                cat = data.get("category")
-                c_title = concept or cat or "Compromiso"
-                if concept and cat and concept.lower().strip() != cat.lower().strip():
-                    c_title = f"{concept} - {cat}"
+                # Unir concepto y persona para el título
+                c_title = concept or person or "Compromiso"
+                if concept and person and concept.lower().strip() != person.lower().strip():
+                    c_title = f"{concept} - {person}"
 
                 new_comm = Commitment(
                     user_id=current_user.id,
@@ -346,89 +377,150 @@ def chat_with_agent(
 
         # I. EDITAR CATEGORIA (Renombrar, Mover o Cambiar Presupuesto)
         elif intent == "UPDATE_CATEGORY":
-            sec = data.get("section")
-            cat = data.get("category")
-            new_name = data.get("new_name") or data.get("concept")
-            
-            raw_amount = data.get("amount")
-            new_budget = None
-            if raw_amount is not None:
-                try:
-                    val = int(raw_amount)
-                    if val > 0: new_budget = val
-                except: pass
-
-            new_section = data.get("new_section")
-            target_type = data.get("target_type", "CATEGORY")
-            
-            if target_type == "SECTION":
-                if sec and new_name:
-                     if update_category_in_db(db, current_user.id, section=sec, new_name=new_name, target_type="SECTION"):
-                          aggregated_responses.append(response_text or f"Carpeta '{sec}' renombrada a '{new_name}'.")
-                     else:
-                          aggregated_responses.append(f"No pude renombrar la carpeta '{sec}'.")
-            elif cat:
-                found_cat = None
-                if sec:
-                     found_cat = db.query(Category).filter(
-                        Category.user_id == current_user.id, 
-                        Category.name == cat,
-                        Category.section == sec
-                     ).first()
-                if not found_cat:
-                    matches = db.query(Category).filter(
-                        Category.user_id == current_user.id, 
-                        Category.name == cat
-                    ).all()
-                    if len(matches) > 1:
-                        sects = ", ".join([f"'{m.section}'" for m in matches])
-                        aggregated_responses.append(f"El ítem '{cat}' existe en múltiples carpetas: {sects}. ¿A cuál te refieres?")
-                        continue 
-                    elif len(matches) == 1: found_cat = matches[0]
+            try:
+                sec = data.get("section")
+                cat = data.get("category")
+                new_name = data.get("new_name")
+                if new_name == "SET_BUDGET": new_name = None # Proteccion extra
                 
-                if found_cat:
-                    sec = found_cat.section
-                    if update_category_in_db(db, current_user.id, sec, cat, new_name=new_name, new_budget=new_budget, new_section=new_section):
-                        final_name = new_name if new_name else cat
-                        final_section = new_section if new_section else sec
-                        c_obj = db.query(Category).filter(Category.user_id==current_user.id, Category.section==final_section, Category.name==final_name).first()
-                        current_budget = c_obj.budget if c_obj else 0
-                        if not new_section: background_tasks.add_task(update_category_in_sheet, sec, cat, current_budget, new_cat=new_name)
-                        final_action_taken = True
-                        msg_parts = []
-                        if new_name: msg_parts.append(f"renombrada a '{new_name}'")
-                        if new_section: msg_parts.append(f"movida a carpeta '{new_section}'")
-                        if new_budget is not None: msg_parts.append(f"presupuesto actualizado a ${new_budget:,}")
-                        aggregated_responses.append(response_text or f"Subcategoría '{cat}' {' y '.join(msg_parts)}.")
-                    else: aggregated_responses.append(f"No pude editar la subcategoría '{cat}'.")
-                else: aggregated_responses.append(f"No encontré la subcategoría '{cat}'.")
-            else: aggregated_responses.append("No entendí que categoría editar.")
+                raw_amount = data.get("amount")
+                new_budget = None
+                if raw_amount is not None:
+                    try:
+                        val = int(raw_amount)
+                        if val > 0: new_budget = val
+                    except: pass
+
+                new_section = data.get("new_section")
+                target_type = data.get("target_type", "CATEGORY")
+                
+                if target_type == "SECTION":
+                    if sec and new_name:
+                         if update_category_in_db(db, current_user.id, section=sec, new_name=new_name, target_type="SECTION"):
+                              aggregated_responses.append(response_text or f"Carpeta '{sec}' renombrada a '{new_name}'.")
+                         else:
+                              aggregated_responses.append(f"No pude renombrar la carpeta '{sec}'.")
+                if cat:
+                    found_cat = None
+                    if sec:
+                         found_cat = db.query(Category).filter(
+                            Category.user_id == current_user.id, 
+                            Category.name == cat,
+                            Category.section == sec
+                         ).first()
+                    if not found_cat:
+                        matches = db.query(Category).filter(
+                            Category.user_id == current_user.id, 
+                            Category.name == cat
+                        ).all()
+                        if len(matches) > 1:
+                            sects = ", ".join([f"'{m.section}'" for m in matches])
+                            aggregated_responses.append(f"El ítem '{cat}' existe en múltiples carpetas: {sects}. ¿A cuál te refieres?")
+                            continue 
+                        elif len(matches) == 1: found_cat = matches[0]
+                    
+                    if found_cat:
+                        # Detectar si es incremento o reemplazo directo
+                        msg_lower = user_msg.lower()
+                        action_concept = data.get("concept", "")
+                        
+                        # Regla: Si explícitamente dice "A" (reemplazo) o el AI manda flag de SET
+                        if "SET_BUDGET" in action_concept or " a " in msg_lower or " al valor " in msg_lower:
+                            # Es reemplazo directo
+                            pass 
+                        # Regla: Sumar si dice "suma", "sumar", "agrega", "agregar", "aumenta", "aumentar", "+", "más"
+                        elif any(word in msg_lower for word in ["suma", "sumar", "agrega", "agregar", "aumenta", "aumentar", "+", "más"]) and new_budget is not None:
+                            new_budget = found_cat.budget + new_budget
+
+                        sec = found_cat.section
+                        if update_category_in_db(db, current_user.id, sec, cat, new_name=new_name, new_budget=new_budget, new_section=new_section):
+                            final_name = new_name if new_name else cat
+                            final_section = new_section if new_section else sec
+                            c_obj = db.query(Category).filter(Category.user_id==current_user.id, Category.section==final_section, Category.name==final_name).first()
+                            current_budget = c_obj.budget if c_obj else 0
+                            if not new_section: background_tasks.add_task(update_category_in_sheet, sec, cat, current_budget, new_cat=new_name)
+                            final_action_taken = True
+                            msg_parts = []
+                            if new_name: msg_parts.append(f"renombrada a '{new_name}'")
+                            if new_section: msg_parts.append(f"movida a carpeta '{new_section}'")
+                            if new_budget is not None: msg_parts.append(f"presupuesto actualizado a ${new_budget:,}")
+                            aggregated_responses.append(response_text or f"Subcategoría '{cat}' {' y '.join(msg_parts)}.")
+                        else: aggregated_responses.append(f"No pude editar la subcategoría '{cat}'.")
+                    else: aggregated_responses.append(f"No encontré la subcategoría '{cat}'.")
+                else: aggregated_responses.append("No entendí que categoría editar.")
+            except Exception as e:
+                print(f"Error en flow UPDATE_CATEGORY: {e}")
+                aggregated_responses.append("Error al actualizar la subcategoría.")
 
         # G. CREAR CATEGORIA
         elif intent == "CREATE_CATEGORY":
-            if data.get("section") and data.get("category"):
+            sec = data.get("section")
+            cat = data.get("category")
+            
+            if sec and cat:
                 exists = db.query(Category).filter(
                     Category.user_id == current_user.id,
-                    Category.section == data["section"],
-                    Category.name == data["category"]
+                    Category.section == sec,
+                    Category.name == cat
                 ).first()
+
                 if not exists:
+                    # Manejo especial para creación de SOLO CARPETA (preparación)
+                    if cat == "_TEMP_PLACEHOLDER_":
+                        # FIX: Creamos efectivamente el placeholder en la BD para que la carpeta "exista" ante las consultas
+                        add_category_to_db(db, current_user.id, sec, "_TEMP_PLACEHOLDER_", 0)
+                        aggregated_responses.append(f"He preparado la carpeta '{sec}'. ¿Qué primera subcategoría (ítem) quieres agregar?")
+                        continue
+
+                    # REGLA: No puede haber un ITEM con nombre de una CARPETA existente
+                    all_sections_normalized = [c[0].upper().strip() for c in db.query(Category.section).filter(Category.user_id == current_user.id).distinct().all()]
+                    cat_upper = cat.upper().strip()
+                    sec_upper = sec.upper().strip()
+                    
+                    if cat_upper in all_sections_normalized:
+                        aggregated_responses.append(f"❌ No puedo crear el ítem '{cat}' porque ese nombre ya corresponde a una Carpeta.")
+                        continue
+
+                    
                     initial_budget = int(data.get("amount", 0) or 0)
-                    add_category_to_db(db, current_user.id, data["section"], data["category"], initial_budget)
-                    background_tasks.add_task(add_category_to_sheet, data["section"], data["category"], initial_budget)
+                    add_category_to_db(db, current_user.id, sec, cat, initial_budget)
+                    
+                    # CLEANUP: Si acabamos de crear un ítem real, borramos el placeholder si existe
+                    try:
+                        placeholder = db.query(Category).filter(Category.user_id == current_user.id, Category.section == sec, Category.name == "_TEMP_PLACEHOLDER_").first()
+                        if placeholder: db.delete(placeholder); db.commit()
+                    except: pass
+                    
+                    background_tasks.add_task(add_category_to_sheet, sec, cat, initial_budget)
+                    
+                    # FIX: Si se crea con un monto, registrar TAMBIÉN el gasto inicial asociado
+                    if initial_budget > 0:
+                        new_expense = Expense(
+                            user_id=current_user.id,
+                            amount=initial_budget,
+                            concept=f"Gasto inicial - {cat}",
+                            category=cat,
+                            section=sec,
+                            payment_method="Efectivo",
+                            date=date.today()
+                        )
+                        db.add(new_expense)
+                        db.commit()
+                        background_tasks.add_task(sync_expense_to_sheet, {"date": str(new_expense.date), "concept": new_expense.concept, "category": new_expense.category, "amount": new_expense.amount, "payment_method": new_expense.payment_method}, current_user.tecnico_nombre, section=sec)
+                    
                     final_action_taken = True
                     
-                    if data["section"] == data["category"]:
-                        msg = f"Carpeta '{data['section']}' creada. ¿Qué primera subcategoría tendrá?"
+                    if sec.upper() == cat.upper():
+                        msg = f"Carpeta '{sec}' creada. ¿Qué primera subcategoría tendrá?"
                         if "?" not in response_text: response_text = f"{response_text}. {msg}" if response_text else msg
                     else:
-                        msg = f"Categoría '{data['category']}' creada en '{data['section']}'. ¿Qué presupuesto mensual tendrá?"
+                        msg = f"Categoría '{cat}' creada en '{sec}'. ¿Qué presupuesto mensual tendrá?"
                         if "presupuesto" not in response_text.lower(): response_text = f"{response_text}. {msg}" if response_text else msg
                     aggregated_responses.append(response_text)
-                else: aggregated_responses.append(f"Categoría {data['category']} ya existe.")
-            elif data.get("section") and not data.get("category"):
-                 aggregated_responses.append(f"Para crear la carpeta '{data['section']}', necesito saber qué primera subcategoría tendrá.")
-            else: aggregated_responses.append("No entendí los datos para crear.")
+                else: 
+                    aggregated_responses.append(f"Categoría '{cat}' ya existe.")
+            else: 
+                aggregated_responses.append("No entendí los datos para crear.")
 
         # J. ACTUALIZAR PRESUPUESTO GLOBAL
         elif intent == "UPDATE_GLOBAL_BUDGET":
@@ -452,7 +544,7 @@ def chat_with_agent(
                 # y el usuario NO mencionó explícitamente una carpeta, preguntar.
                 all_matches = db.query(Category).filter(
                     Category.user_id == current_user.id,
-                    Category.name == data["category"]
+                    Category.name == data.get("category", "General")
                 ).all()
                 
                 if len(all_matches) > 1:
@@ -467,28 +559,55 @@ def chat_with_agent(
                         data["section"] = match_found.section
                     else:
                         sects = ", ".join([f"'{c.section}'" for c in all_matches])
-                        aggregated_responses.append(f"El ítem '{data['category']}' existe en varias carpetas: {sects}. ¿A cuál corresponde?")
+                        aggregated_responses.append(f"El ítem '{data.get('category', 'General')}' existe en varias carpetas: {sects}. ¿A cuál corresponde?")
                         continue 
 
-                exists = db.query(Category).filter(Category.user_id == current_user.id, Category.section == data["section"], Category.name == data["category"]).first()
+                exists = db.query(Category).filter(Category.user_id == current_user.id, Category.section == data.get("section", "OTROS"), Category.name == data.get("category", "General")).first()
                 if not exists:
-                    add_category_to_db(db, current_user.id, data["section"], data["category"], 0)
-                    try: background_tasks.add_task(add_category_to_sheet, data["section"], data["category"], 0)
+                    # Si el AI ya trae una SECCIÓN específica (porque el usuario respondió la pregunta), la usamos.
+                    target_section = data.get("section")
+                    if not target_section or target_section == "OTROS" or target_section == data.get("category", "General"):
+                        # REGLA: No adivinar carpetas. Si no existe y no nos dieron carpeta, preguntar.
+                        cat_name = data.get("category", "General")
+                        aggregated_responses.append(f"El ítem '{cat_name}' no existe en tu presupuesto. ¿En qué carpeta (sección) quieres crearlo?")
+                        continue
+
+                    # REGLA RESTRICTIVA: Solo permitir crear ítem si la CARPETA ya existe
+                    folder_exists = db.query(Category).filter(Category.user_id == current_user.id, Category.section == target_section).first()
+                    if not folder_exists:
+                        # FLUJO INTELIGENTE: Si la carpeta no existe, la preparamos y guiamos al usuario
+                        msg = f"La carpeta '{target_section}' no existe. He preparado la creación. ¿Quieres agregar '{data.get('category')}' a esta nueva carpeta?"
+                        # Guardamos el estado en el historial (a través del mensaje de respuesta) para que la próxima vuelta lo capture
+                        add_category_to_db(db, current_user.id, target_section, data.get("category"), 0) # Pre-creamos con 0 para establecer la carpeta
+                        aggregated_responses.append(msg)
+                        continue
+                    
+                    # Si tenemos sección y la carpeta existe, creamos la categoría automáticamente
+                    # FIX: Usar el monto del gasto como presupuesto inicial para que no quede en 0
+                    initial_amount = int(data.get("amount", 0))
+                    add_category_to_db(db, current_user.id, target_section, data.get("category", "General"), initial_amount)
+                    try: background_tasks.add_task(add_category_to_sheet, target_section, data.get("category", "General"), initial_amount)
                     except: pass
 
                 new_expense = Expense(
-                    user_id=current_user.id, amount=int(data["amount"]), concept=data["concept"],
-                    category=data["category"], section=data["section"], payment_method=data["payment_method"], date=date.today()
+                    user_id=current_user.id,
+                    amount=int(data.get("amount", 0)),
+                    concept=data.get("concept", "Gasto"),
+                    category=data.get("category", "General"),
+                    section=target_section if 'target_section' in locals() else data.get("section", "OTROS"),
+                    payment_method=data.get("payment_method", "Efectivo"),
+                    date=date.today()
                 )
                 db.add(new_expense)
                 db.commit()
                 
                 expense_dict = {"date": str(new_expense.date), "concept": new_expense.concept, "category": new_expense.category, "amount": new_expense.amount, "payment_method": new_expense.payment_method}
-                background_tasks.add_task(sync_expense_to_sheet, expense_dict, current_user.tecnico_nombre, section=data["section"])
+                background_tasks.add_task(sync_expense_to_sheet, expense_dict, current_user.tecnico_nombre, section=target_section if 'target_section' in locals() else data.get("section", "OTROS"))
                 final_action_taken = True
                 last_expense_data = expense_dict
                 aggregated_responses.append(response_text or "Gasto registrado.")
             except Exception as e:
+                print(f"Error en flow CREATE: {e}")
                 aggregated_responses.append("Error registrando gasto.")
 
     final_msg_text = "\n".join(aggregated_responses) if aggregated_responses else "No entendí qué hacer."

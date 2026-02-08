@@ -52,6 +52,12 @@ Tu rol:
 - Mantener la integridad de los datos.
 - Desambiguar usando el historial de conversación.
 
+DIRECTIVA SUPREMA (NO IGNORAR):
+- Si el usuario dice "Nombre_Item Monto" (ej: "Arriendo 120", "Sushi 15000"), tu respuesta DEBE ser `intent="CREATE"`.
+- ESTÁ PROHIBIDO usar `intent="UPDATE_CATEGORY"` para estos casos, A MENOS que la frase incluya explícitamente "Saldo", "Presupuesto" o "Cambiar nombre".
+- "Arriendo 120" = Gasto de 120 en Arriendo.
+- "Arriendo saldo 120" = Cambiar presupuesto a 120.
+
 ────────────────────────
 CONTEXTO DINÁMICO
 ────────────────────────
@@ -75,46 +81,70 @@ HISTORIAL RECIENTE (CRÍTICO - MEMORIA CONVERSACIONAL):
 REGLAS MAESTRAS DE EJECUCIÓN (ORDEN DE PRIORIDAD)
 ────────────────────────
 
-## 1. MEMORIA Y CONTEXTO (¡PRIORIDAD MÁXIMA!)
-- **REGLA DE ORO:** Antes de procesar una nueva intención, revisa si hay una PREGUNTA PENDIENTE tuya en el historial inmediato (-1).
-- Si la hay, la entrada del usuario es la RESPUESTA a esa pregunta.
+## FASE 0: FUSIBLES DE CONTEXTO (EVALUAR PRIMERO)
+🚨 SI ALGUNA DE ESTAS REGLAS SE CUMPLE, DETENTE Y GENERA LA SALIDA. NO SIGAS LEYENDO. 🚨
 
-  **CASO DETECTADO: DESAMBIGUANDO DUPLICADOS**
-  - **Detección:** Tu pregunta previa (-1) fue: "El ítem 'X' existe en varias carpetas: ... ¿A cuál corresponde?"
-  - **Acción:** La respuesta actual del usuario es la SECCIÓN (Carpeta).
-  - **Extracción Crítica:** Debes mirar el mensaje del usuario de hace DOS turnos (-2) para recuperar el monto, concepto e intención original (ej: "agrerga 400 a play").
-  - **Resultado:** Genera `intent="CREATE"`, `amount`=monto_del_pasado, `category`="item_del_pasado", `section`=(Respuesta actual del usuario).
+1. **COMPLETAR DATOS DE COMPROMISO (MÁXIMA PRIORIDAD):**
+   - **Detección:** Si tu último mensaje (-1) CONTIENE la frase "🛑 Faltan datos para el compromiso".
+   - **ACCIÓN:** El mensaje actual es el DATO FALTANTE (probablemente el Concepto).
+   - **EJECUCIÓN:**
+     1. Recupera la Persona y Monto del mensaje del usuario de hace 2 turnos (-2).
+     2. **DEFINE EL TIPO (CRÍTICO):**
+        - Si el mensaje (-2) decía "me debe", "me deben" -> `commitment_type="LOAN"`.
+        - Si el mensaje (-2) decía "le debo", "debo" -> `commitment_type="DEBT"`.
+   - **SALIDA:** `intent="CREATE_COMMITMENT"`, `category="PersonaRecuperada"`, `amount=MontoRecuperado`, `concept="<USER_MESSAGE>"`, `commitment_type="TIPO_DEFINIDO"`.
 
-  **CASO DETECTADO: CREANDO NUEVA CARPETA**
-  ... (Se mantiene flujo de creación de carpeta e ítem) ...
+2. **CORRECCIÓN DE CARPETA / DUPLICADOS:**
+   - **Detección:** Si tu último mensaje (-1) preguntaba "¿En qué carpeta...?", "¿A cuál corresponde?" o decia "**no existe en tu presupuesto**".
+   - **ACCIÓN:** RECUPERA el ÍTEM y el MONTO del mensaje del usuario de hace 2 turnos (-2). Usa el mensaje ACTUAL como la SECCIÓN.
+   - **SALIDA:** `intent="CREATE"`, `category="ItemRecuperado"`, `amount=MontoRecuperado`, `section="TEXTO_EXACTO_DEL_MENSAJE_ACTUAL"`.
 
---- SI NO HAY PREGUNTA PENDIENTE, EVALÚA: ---
+3. **STICKY CONTEXT GENÉRICO:** 
+   - Si tu mensaje anterior (-1) hizo cualquier otra pregunta DIRECTA, asume que la respuesta actual es para eso.
 
-## 3. REGISTRO DE GASTOS (GASTO vs PRESUPUESTO)
-- **EL VERBO "AGREGAR" ES SIEMPRE GASTO:** 
-  * "Agrega 300", "agrerga 200", "pon 500", "suma 100", "gasto", "compré" -> **SIEMPRE son `intent="CREATE"` (GASTO NUEVO).**
-  * **PROHIBICIÓN TOTAL:** NUNCA uses `intent="UPDATE_CATEGORY"` para estos verbos aunque el ítem tenga presupuesto. Cada "agrega" es un gasto que se resta del presupuesto disponible, NO una edición del presupuesto mismo.
-  * **ÚNICA EXCEPCIÓN:** Solo usa `intent="UPDATE_CATEGORY"` si la frase contiene literalmente la palabra **"PRESUPUESTO"** o **"SALDO"** (ej: "Aumenta el presupuesto de X a 5000", "Cambia el saldo de Y").
-- **VERIFICACIÓN DE DUPLICADOS:**
-  * Si el ítem existe en >1 carpeta y el usuario no dijo cuál:
-    - **INTENT: TALK**.
-    - **TEXTO OBLIGATORIO:** "El ítem 'X' existe en varias carpetas: 'Carpeta1', 'Carpeta2'. ¿A cuál corresponde?"
+--- SI NO ACTIVASTE NINGÚN FUSIBLE ARRIBA, CONTINÚA CON FASE 1 ---
 
-## 4. OTRAS INTENCIONES (RESUMEN)
-- `DELETE_CATEGORY`: Solo si dice "borra", "elimina" la carpeta o ítem.
-  * **DISTINCIÓN CRÍTICA:** 
-    - Si dice "borra la CARPETA X" -> `target_type="SECTION"`, `section="X"`.
-    - Si dice "borra el ÍTEM Y" -> `target_type="CATEGORY"`, `category="Y"`.
-- `UPDATE_CATEGORY`: Solo para RENOMBRAR, MOVER o cambiar literalmente el SALDO/PRESUPUESTO.
-  * **DISTINCIÓN CRÍTICA:** 
-    - Si dice "renombra la CARPETA X" -> `target_type="SECTION"`, `section="X"`.
-    - Si dice "renombra el ÍTEM Y" -> `target_type="CATEGORY"`, `category="Y"`.
-- `CREATE_COMMITMENT`: "Debo", "Me deben".
-  * **REGLA DE CAMPOS:** 
-    - `category`: Nombre de la PERSONA (ej: "Mama", "El Panda").
-    - `concept`: Razón o NOTA (ej: "un macdonal", "cervezas").
-    - `amount`: Monto total.
-    - `commitment_type`: "DEBT" (si el usuario debe) o "LOAN" (si le deben).
+## FASE 1: NUEVOS COMANDOS (EVALUACIÓN FINANCIERA)
+
+
+
+### SECCIÓN A: GASTOS (CEREBRO DE CAJERO)
+- **ALERTA REGRESIÓN (ÍTEMS EXISTENTES):** Si el usuario dice **"Nombre_Item Monto"** (ej: "Arriendo 120", "Sushi 15000") y el ítem **YA EXISTE** en la lista:
+  - **ACCIÓN:** Es **SIEMPRE** `intent="CREATE"`. (Registrar gasto).
+  - **PROHIBICIÓN:** NO uses `UPDATE_CATEGORY` (Presupuesto) a menos que diga explícitamente "saldo" o "presupuesto".
+- **ÍTEMS NUEVOS (ARRIENDO 120):** Si un ítem NO EXISTE y el usuario solo da Nombre y Monto:
+  - **ACCIÓN:** Genera `intent="TALK"` y pregunta: "El ítem 'X' no existe en tu presupuesto. ¿En qué carpeta (sección) quieres crearlo?"
+- **ITEM EN CARPETA EXISTENTE (ACCESO RÁPIDO):**
+  - **Detección:** Si el usuario dice explícitamente "Pon X en la carpeta Y", "Agrega X a Y".
+  - **INTENT: CREATE**, `category="X"`, `section="Y"`.
+
+### SECCIÓN B: COMPROMISOS (DEUDAS / PRÉSTAMOS)
+- **CREAR COMPROMISO (`CREATE_COMMITMENT`):** "Debo", "Me deben", "X me debe".
+  * **REGLA DE ORO (ESTRICTEZA):** DEBES tener 3 DATOS reales:
+    1. **QUIÉN** (`category`): Persona.
+    2. **CUÁNTO** (`amount`): Monto.
+    3. **QUÉ** (`concept`): Motivo específico (ej: "Pizza", "Entradas", "Asado").
+  * **VALIDACIÓN:** Si falta el Motivo o es genérico (ej: "plata", "deuda"):
+    - **PROHIBICIÓN:** NO generes el compromiso. NO inventes motivos.
+    - **ACCIÓN:** Genera `intent="TALK"`. Di: "🛑 Faltan datos para el compromiso: por qué concepto (motivo específico). ¿Podrías completarlo?"
+  * **CAMPOS:** `commitment_type="DEBT"` (si debe) o `"LOAN"` (si le deben).
+
+### SECCIÓN C: GESTIÓN DE COMPROMISOS (PAGOS / BORRADOS)
+- **MARCAR PAGADO (`MARK_PAID_COMMITMENT`):** "Ya pagué", "Me pagaron", "Saldar deuda", "Pagado".
+  - **PROHIBICIÓN:**
+    - Si dice "Me debe", "Le debo", "Debo" (PRESENTE): ESO NO ES PAGADO. ES SECCIÓN B (CREAR).
+  - **ACCIÓN:** Busca en la lista de "Compromisos" el ID correspondiente.
+  - **SALIDA:** `intent="MARK_PAID_COMMITMENT"`, `target_id=ID_ENCONTRADO`.
+- **BORRAR COMPROMISO (`DELETE_COMMITMENT`):** "Borra la deuda", "Elimina el compromiso".
+  - **ACCIÓN:** Busca el ID en la lista.
+  - **SALIDA:** `intent="DELETE_COMMITMENT"`, `target_id=ID_ENCONTRADO`.
+
+### SECCIÓN D: PRESUPUESTO, SALDOS Y CONFIGURACIÓN
+- `CREATE_CATEGORY`: "Crea la carpeta X" o "Nuevo ítem Y en X".
+- `DELETE_CATEGORY`: "Borra la sección X" o "Elimina el ítem Y".
+- `UPDATE_CATEGORY`: RENOMBRAR, MOVER o CAMBIAR SALDOS (Solo si dice "Saldo" o "Presupuesto").
+- **INCREMENTO SALDO:** "Suma X al presupuesto de Y" -> `intent="UPDATE_CATEGORY"`, `amount=X`.
+- **REEMPLAZO SALDO:** "Cambia el saldo de Y a X" -> `intent="UPDATE_CATEGORY"`, `amount=X`, `concept="SET_BUDGET"`.
 
 ────────────────────────
 FORMATO JSON DE SALIDA
@@ -122,8 +152,10 @@ FORMATO JSON DE SALIDA
 {{
   "intent": "CREATE | UPDATE | DELETE | TALK | CREATE_CATEGORY | UPDATE_CATEGORY | ...",
   "target_type": "SECTION | CATEGORY",
-  "section": "Carpeta",
-  "category": "Persona o Item",
+  "section": "Nombre de la Carpeta",
+  "category": "Nombre del Item",
+  "new_name": "Nuevo Nombre (si aplica)",
+  "new_section": "Nueva Carpeta (si aplica)",
   "amount": 0,
   "concept": "Razón o Nota",
   "response_text": "Texto respuesta."
@@ -146,7 +178,7 @@ MENSANJE DEL USUARIO:
                 response_format={ "type": "json_object" }
             )
             data = json.loads(response.choices[0].message.content)
-            return {"status": "success", "data": _normalize_ai_data(data)}
+            return {"status": "success", "data": _normalize_ai_data(data, message)}
         except Exception as e:
             print(f"OpenAI Error: {e}")
 
@@ -160,18 +192,22 @@ MENSANJE DEL USUARIO:
         response = model.generate_content(prompt)
         text_response = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text_response)
-        return {"status": "success", "data": _normalize_ai_data(data)}
+        print(f"DEBUG AI DATA: {data}")
+        return {"status": "success", "data": _normalize_ai_data(data, message)}
     except Exception as e:
         error_msg = str(e)
         if "429" in error_msg or "ResourceExhausted" in error_msg:
             return {"status": "error", "message": "Lúcio está agotado (Límite de Google)."}
         return {"status": "error", "message": "Error técnico: " + error_msg}
 
-def _normalize_ai_data(data):
+def _normalize_ai_data(data, user_message=None):
     if isinstance(data, list):
-        return [_normalize_ai_data(item) for item in data]
+        return [_normalize_ai_data(item, user_message) for item in data]
         
     if isinstance(data, dict):
+        if data.get("concept") == "<USER_MESSAGE>" and user_message:
+            data["concept"] = user_message
+
         if data.get("intent") == "CREATE":
             if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
             if not data.get("section"): data["section"] = "OTROS"

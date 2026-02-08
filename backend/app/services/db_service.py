@@ -116,6 +116,10 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
         
         for cat_info in cats:
             cat_name = cat_info["name"]
+            
+            # FILTRO: Ocultar placeholders internos
+            if cat_name == "_TEMP_PLACEHOLDER_": continue
+            
             cat_budget = cat_info["budget"]
             
             # Gastos de esta subcategoría
@@ -208,6 +212,7 @@ def update_category_in_db(db: Session, user_id: int, section: str,
     else:
         if not category: return False
         
+        # Buscar objeto original
         cat_obj = db.query(Category).filter(
             Category.user_id == user_id,
             Category.section.ilike(section),
@@ -216,15 +221,21 @@ def update_category_in_db(db: Session, user_id: int, section: str,
         
         if not cat_obj: return False
         
+        # Guardar valores originales exactos para buscar en transacciones
+        original_section = cat_obj.section
+        original_name = cat_obj.name
+        
         # A. Renombrar
         if new_name:
-            # Actualizar gastos históricos antes de cambiar el nombre del objeto
+            cat_obj.name = new_name
+            # Actualizar gastos históricos
             db.query(Expense).filter(
                 Expense.user_id == user_id,
-                Expense.section == section,
-                Expense.category == category
+                Expense.section == original_section,
+                Expense.category == original_name
             ).update({"category": new_name})
-            cat_obj.name = new_name
+            # Actualizamos original_name para las siguientes operaciones
+            original_name = new_name
             
         # B. Cambiar Presupuesto
         if new_budget is not None:
@@ -232,16 +243,13 @@ def update_category_in_db(db: Session, user_id: int, section: str,
             
         # C. Mover a otra Carpeta (Sección)
         if new_section:
+            cat_obj.section = new_section
             # Actualizar gastos históricos
-            # Nota: Si ya se renombró arriba, usamos new_name, sino category original
-            current_cat_name = new_name if new_name else category
             db.query(Expense).filter(
                 Expense.user_id == user_id,
-                Expense.section == section,
-                Expense.category == current_cat_name
+                Expense.section == original_section,
+                Expense.category == original_name
             ).update({"section": new_section})
-            
-            cat_obj.section = new_section
 
         db.commit()
         return True
