@@ -29,6 +29,9 @@ class FinanceApp {
         this.sectionsData = {};
         this.dashboardData = null;
         this.commitments = [];
+        this.allExpenses = []; // Store all expenses for pagination
+        this.expensePage = 1;
+        this.commitmentPage = 1;
         this.init();
     }
 
@@ -944,20 +947,28 @@ class FinanceApp {
             if (response.ok) {
                 const expenses = await response.json();
                 console.log(`[DEBUG] Received ${expenses.length} expenses`);
-                this.renderExpenses(expenses);
+                this.allExpenses = expenses;
+                this.renderExpenses(expenses, this.expensePage);
             }
         } catch (error) {
             console.error('Error loading expenses:', error);
         }
     }
 
-    renderExpenses(expenses) {
+    renderExpenses(expenses, page = 1) {
         const list = document.getElementById('expense-list');
         if (!list) {
             console.error('[DEBUG] #expense-list not found in DOM');
             return;
         }
-        console.log(`[DEBUG] Rendering ${expenses.length} expenses...`);
+
+        this.expensePage = page;
+        const itemsPerPage = 10;
+        const start = (page - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        const pageItems = expenses.slice(start, end);
+
+        console.log(`[DEBUG] Rendering expenses page ${page}...`);
         list.innerHTML = '';
 
         const icons = {
@@ -968,7 +979,7 @@ class FinanceApp {
             'Cerveza': '🍺', 'Farmacia': '🩹', 'Arriendo': '🔑'
         };
 
-        expenses.slice(0, 50).forEach(exp => {
+        pageItems.forEach(exp => {
             try {
                 const item = document.createElement('div');
                 item.className = 'expense-item';
@@ -990,6 +1001,30 @@ class FinanceApp {
                 console.error('[DEBUG] Error rendering single expense:', err, exp);
             }
         });
+
+        this.renderPagination('expense-pagination', expenses.length, itemsPerPage, page, (p) => {
+            this.renderExpenses(expenses, p);
+            window.scrollTo({ top: list.offsetTop - 100, behavior: 'smooth' });
+        });
+    }
+
+    renderPagination(containerId, totalItems, itemsPerPage, currentPage, onPageChange) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        container.innerHTML = '';
+
+        if (totalPages <= 1) return;
+
+        // Show a max of 5 page buttons or logic for dots if many
+        for (let i = 1; i <= totalPages; i++) {
+            const btn = document.createElement('button');
+            btn.className = `btn-page ${i === currentPage ? 'active' : ''}`;
+            btn.textContent = i;
+            btn.onclick = () => onPageChange(i);
+            container.appendChild(btn);
+        }
     }
 
     async deleteExpense(id, event) {
@@ -1100,14 +1135,14 @@ class FinanceApp {
             if (response.ok) {
                 const data = await response.json();
                 this.commitments = data;
-                this.renderCompromisos(data);
+                this.renderCompromisos(data, this.commitmentPage);
             }
         } catch (error) {
             console.error(error);
         }
     }
 
-    renderCompromisos(data) {
+    renderCompromisos(data, page = 1) {
         let totalDebt = 0, countDebt = 0, totalLoan = 0, countLoan = 0;
         data.forEach(c => {
             if (c.status !== 'PAID') {
@@ -1117,7 +1152,13 @@ class FinanceApp {
             }
         });
 
-        // Update KPIs with higher visibility
+        this.commitmentPage = page;
+        const itemsPerPage = 10;
+        const start = (page - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        const pageItems = data.slice(start, end);
+
+        // Update KPIs
         const debtAmtEl = document.getElementById('kpi-debt-amount');
         const debtCntEl = document.getElementById('kpi-debt-count');
         if (debtAmtEl) {
@@ -1146,10 +1187,10 @@ class FinanceApp {
         }
 
         const list = document.getElementById('compromisos-list');
-
         if (!list) return;
+
         list.innerHTML = '';
-        data.forEach(c => {
+        pageItems.forEach(c => {
             const item = document.createElement('div');
             item.className = `commitment-item ${c.status === 'PAID' ? 'paid-item' : ''}`;
             const isPaid = c.status === 'PAID';
@@ -1170,6 +1211,11 @@ class FinanceApp {
             `;
             item.querySelector('.btn-check').addEventListener('click', () => this.toggleCommitmentStatus(c));
             list.appendChild(item);
+        });
+
+        this.renderPagination('compromisos-pagination', data.length, itemsPerPage, page, (p) => {
+            this.renderCompromisos(data, p);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         });
     }
 

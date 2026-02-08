@@ -1103,24 +1103,74 @@ input[type="radio"]:checked+.toggle-btn.loan {
         font-size: 0.8rem;
         color: var(--text-muted);
     }
-.btn-delete-expense {
-    background: none;
-    border: none;
-    color: var(--danger);
-    font-size: 1.2rem;
-    cursor: pointer;
-    padding: 8px;
-    margin-left: 10px;
-    opacity: 0.3;
-    transition: opacity 0.2s;
-}
 
-.expense-item:hover .btn-delete-expense {
-    opacity: 1;
-}
-
-@media (max-width: 600px) {
     .btn-delete-expense {
-        opacity: 0.8;
+        background: none;
+        border: none;
+        color: var(--danger);
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 8px;
+        margin-left: 10px;
+        opacity: 0.3;
+        transition: opacity 0.2s;
     }
-}
+
+    .expense-item:hover .btn-delete-expense {
+        opacity: 1;
+    }
+
+    @media (max-width: 600px) {
+        .btn-delete-expense {
+            opacity: 0.8;
+        }
+    }
+
+    /* Pagination */
+    .pagination-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        margin: 20px 0;
+        flex-wrap: wrap;
+    }
+
+    .btn-page {
+        width: 35px;
+        height: 35px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        background: white;
+        color: var(--text-muted);
+        font-family: inherit;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-page.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn-page:hover:not(.active) {
+        background: #f1f5f9;
+        color: var(--text-main);
+    }
+
+    body.dark-mode .btn-page {
+        background: var(--card-bg);
+        border-color: var(--border-color);
+        color: var(--text-muted);
+    }
+
+    body.dark-mode .btn-page.active {
+        background: var(--primary);
+        color: white;
+    }
