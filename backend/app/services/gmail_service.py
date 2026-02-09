@@ -47,68 +47,133 @@ def get_gmail_service():
     return service
 
 def parse_amount(text):
-    # Extract number from string like "$12.990" or "CLP 5000"
-    # Remove dots, keep comma if decimal? Chile uses dot for thousands.
-    # regex look for $ or CLP then digits/dots
+    if not text: return 0
     try:
-        # Simple approach: remove everything except digits
-        # This assumes CLP (no cents usually). If UF/USD, logic changes.
+        # Quitar todo lo que no sea dígito
         clean = re.sub(r'[^\d]', '', text)
         return int(clean)
     except:
         return 0
 
+def get_email_body(payload):
+    """
+    Extrae el cuerpo del mensaje de forma recursiva.
+    """
+    body = ""
+    if 'parts' in payload:
+        for part in payload['parts']:
+            body += get_email_body(part)
+    else:
+        content_type = payload.get('mimeType')
+        data = payload.get('body', {}).get('data')
+        if data:
+            decoded = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+            if content_type == 'text/plain':
+                body += decoded
+            elif content_type == 'text/html':
+                # Opcional: limpiar HTML con regex simple si no hay BS4
+                body += re.sub(r'<[^>]+>', ' ', decoded)
+    return body
+
 def parse_bank_email(subject, snippet, sender):
     """
-    Intenta extraer datos de un correo bancario.
-    Retorna dict {amount, concept, category, date} o None.
+    Parser especializado para bancos chilenos basado en la especificación v0.2.
     """
+    sender_low = sender.lower()
+    snip_low = snippet.replace("\n", " ") # Normalizar para regex de una línea
     
-    # --- LOGICA 1: Banco Chile / Notificaciones Compra ---
-    # Subject: Notificación de Compra
-    # Snippet: Compra por $4.990 en UBER EATS realizada con su Tarjeta...
-    if "bancochile" in sender or "banco de chile" in sender.lower() or "notificacion" in subject.lower() or "compra con tarjeta" in subject.lower():
-        # Regex flexible para Banco Chile:
-        # "compra por $9.244 ... en PAYU *UBER TRIP ... el"
-        # Captura 1: Monto (con puntos), Captura 2: Comercio (hasta la palabra "el" o fin de línea)
-        match = re.search(r'compra por\s+\$([\d\.]+).*?\s+en\s+(.*?)\s+(?:el\s+\d{2}/\d{2}|realizada)', snippet, re.IGNORECASE)
-        if match:
-            amount_str = match.group(1)
-            commerce = match.group(2).strip()
-            
-            # Limpieza extra del comercio (quitar PAYU *, etc)
-            commerce = commerce.replace("PAYU *", "").replace("PAYU ", "")
-            
+    # 🟦 BANCO DE CHILE
+    if "bancochile" in sender_low or "banco de chile" in sender_low or "serviciodetransfere" in sender_low:
+        # Compra T. Crédito
+        m = re.search(r'compra por\s+\$([\d\.]+).*?en\s+(.*?)\s+el\s+(\d{2}/\d{2}/\d{4})', snip_low, re.IGNORECASE)
+        if m:
             return {
-                "amount": parse_amount(amount_str),
-                "concept": commerce.title(),
-                "category": "Detectar", 
-                "payment_method": "Banco Chile"
+                "banco": "Banco de Chile", "tipo": "compra", "monto": parse_amount(m.group(1)),
+                "comercio": m.group(2).strip(), "fecha": m.group(3), "medio": "tarjeta_credito"
             }
-            
-    # --- LOGICA 2: Santander ---
-    # Subject: Comprobante de Compra
-    if "santander" in sender.lower():
-        match = re.search(r'monto de\s+\$([\d\.]+)\s+en\s+(.*)', snippet, re.IGNORECASE)
-        if match:
-             amount_str = match.group(1)
-             commerce = match.group(2).split(" con tarjeta")[0].strip()
-             return {
-                "amount": parse_amount(amount_str),
-                "concept": commerce.title(),
-                "category": "Detectar",
-                "payment_method": "Santander"
+        # Transferencia a terceros (Formato multibanco/web - SUPER FLEXIBLE)
+        m_amt = re.search(r'(?:Monto|monto)\s+\$?([\d\.]+)', snip_low)
+        # Buscar el nombre ignorando etiquetas de campo de forma GRADY
+        m_dest = re.search(r'(?:Nombre\s+y\s+Apellido|Destino|Hacia|hacia)\s+([\w\s\.\-\,]+)(?:\s+Rut|Rut|Tipo|Nº|Banco|el|fecha|$)', snip_low, re.IGNORECASE)
+        
+        if m_amt:
+            dest = m_dest.group(1).strip() if m_dest else "Tercero"
+            # Limpiar etiquetas que se hayan colado al inicio del nombre
+            for label in ["Nombre y Apellido", "Destino", "Hacia"]:
+                dest = re.sub("^"+label, "", dest, flags=re.IGNORECASE).strip()
+            return {
+                "banco": "Banco de Chile", "tipo": "transferencia", "monto": parse_amount(m_amt.group(1)),
+                "destinatario": dest, "medio": "transferencia"
             }
 
-    # --- LOGICA 3: Generica "Compra por $X en Y" ---
-    match_gen = re.search(r'Compra por\s+\$([\d\.]+)\s+en\s+(.*)', snippet, re.IGNORECASE)
-    if match_gen:
-        return {
-            "amount": parse_amount(match_gen.group(1)),
-            "concept": match_gen.group(2).split(" ")[0].title(), # First word as concept often safe
-            "category": "Otros",
-            "payment_method": "Auto-Detect"
-        }
+    # 🟧 BANCOESTADO
+    if "bancoestado" in sender_low:
+        # Compra
+        m = re.search(r'compra por\s+\$([\d\.]+)\s+en\s+(.*?)\s+asociada', snip_low, re.IGNORECASE)
+        if m:
+            return {
+                "banco": "BancoEstado", "tipo": "compra", "monto": parse_amount(m.group(1)),
+                "comercio": m.group(2).strip()
+            }
+        # Transferencia
+        m = re.search(r'transferencia\s+desde.*?por\s+\$([\d\.]+)\s+hacia\s+(.*?)\s+el', snip_low, re.IGNORECASE)
+        if m:
+            return {
+                "banco": "BancoEstado", "tipo": "transferencia", "monto": parse_amount(m.group(1)),
+                "destinatario": m.group(2).strip()
+            }
+
+    # 🟨 SANTANDER
+    if "santander" in sender_low:
+        # Compra
+        m = re.search(r'compra en\s+(.*?)\s+por\s+\$([\d\.]+)', snip_low, re.IGNORECASE)
+        if m:
+            return {
+                "banco": "Santander", "tipo": "compra", "comercio": m.group(1).strip(), "monto": parse_amount(m.group(2))
+            }
+        # Transferencia
+        m = re.search(r'transferencia por\s+\$([\d\.]+).*?a\s+(.*?)\s+el', snip_low, re.IGNORECASE)
+        if m:
+            return {
+                "banco": "Santander", "tipo": "transferencia", "monto": parse_amount(m.group(1)), "destinatario": m.group(2).strip()
+            }
+
+    # 🟥 BCI
+    if "bci" in sender_low:
+        m_amt = re.search(r'Monto:\s+\$([\d\.]+)', snippet)
+        m_com = re.search(r'Comercio:\s+(.*)', snippet)
+        m_dest = re.search(r'Destinatario:\s+(.*)', snippet)
+        if m_amt:
+            res = {"banco": "BCI", "monto": parse_amount(m_amt.group(1))}
+            if m_com: 
+                res.update({"tipo": "compra", "comercio": m_com.group(1).strip()})
+            elif m_dest:
+                res.update({"tipo": "transferencia", "destinatario": m_dest.group(1).strip()})
+            return res
+
+    # 🟪 SCOTIABANK / 🟩 FALABELLA / 🟦 ITAÚ / 🟧 RIPLEY / 🟨 COOPEUCH (Lógica Genérica Mejorada)
+    # Casi todos usan: "Compra por $X en Y" o "Transferencia por $X a Y"
+    m_tipo = re.search(r'(compra|transferencia|pago)\s+(?:por|realizada|en|desde)?\s*\$([\d\.]+)', snip_low, re.IGNORECASE)
+    if m_tipo:
+        tipo = m_tipo.group(1).lower()
+        monto = parse_amount(m_tipo.group(2))
+        res = {"monto": monto, "tipo": tipo}
+        
+        # Intentar sacar banco del sender
+        if "falabella" in sender_low: res["banco"] = "Banco Falabella"
+        elif "itau" in sender_low: res["banco"] = "Itaú"
+        elif "ripley" in sender_low: res["banco"] = "Banco Ripley"
+        elif "coopeuch" in sender_low: res["banco"] = "Coopeuch"
+        elif "scotiabank" in sender_low: res["banco"] = "Scotiabank"
+        
+        # Buscar comercio o destinatario
+        m_en = re.search(r'en\s+(.*?)(?:\stel|el|con|fecha|$)', snip_low, re.IGNORECASE)
+        m_a = re.search(r'(?:a|hacia)\s+(.*?)(?:\s el|el|fecha|$)', snip_low, re.IGNORECASE)
+        
+        if tipo == "compra" and m_en: res["comercio"] = m_en.group(1).strip()
+        elif tipo == "transferencia" and m_a: res["destinatario"] = m_a.group(1).strip()
+        
+        return res
 
     return None
 
@@ -161,8 +226,8 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
     if not service:
         return {"status": "error", "detail": "Gmail service not available"}
 
-    # Search for unread emails with relevant keywords
-    query = 'is:unread (subject:"compra" OR subject:"notificación de compra" OR subject:"pago realizado")'
+    # Search for unread emails with relevant keywords (Focus on banks)
+    query = 'is:unread (subject:"compra" OR subject:"transferencia" OR subject:"notificación" OR subject:"comprobante")'
     results = service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
     messages = results.get('messages', [])
 
@@ -180,9 +245,22 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
         # Parse data
         data = parse_bank_email(subject, snippet, sender)
         
-        if data and data['amount'] > 0:
+        # Normalizar para Expense model
+        amount = 0
+        concept = ""
+        bank_name = "Banco"
+        
+        if data:
+            amount = data.get("monto", 0)
+            bank_name = data.get("banco", "Banco")
+            if data.get("tipo") == "transferencia":
+                concept = f"Transf a {data.get('destinatario', 'Alguien')}"
+            else:
+                concept = data.get("comercio", "Compra")
+        
+        if amount > 0:
             # Auto Categorize
-            section, category = auto_categorize(data['concept'])
+            section, category = auto_categorize(concept)
             
             # Create Expense Object
             # Assuming 'section' is stored in category or logic handles it. 
@@ -191,12 +269,12 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
             
             new_expense = Expense(
                 user_id=user_id,
-                amount=data['amount'],
-                concept=data['concept'] + " (Auto)",
+                amount=amount,
+                concept=f"{concept} ({bank_name})",
                 date=date.today(),
                 category=category,
                 section=section,
-                payment_method=data['payment_method'],
+                payment_method=bank_name,
                 image_url=None
             )
             
@@ -216,7 +294,7 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
                 print(f"Sync error for gmail expense: {e}")
 
             processed_count += 1
-            new_expenses.append(f"{data['concept']} (${data['amount']})")
+            new_expenses.append(f"{concept} (${amount})")
 
             # Mark as read (remove UNREAD label)
             service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['UNREAD']}).execute()
@@ -232,19 +310,22 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
         "details": new_expenses
     }
 
-def sync_emails_with_nexo(db: Session, user_id: int, limit=10):
+def sync_emails_with_nexo(db: Session, user_id: int, limit=15):
     """
-    Nexo sincroniza los correos, los entiende y los guarda en el historial.
+    Nexo sincroniza los correos (leídos y no leídos), los entiende y los guarda.
     """
     service = get_gmail_service()
     if not service:
         return {"status": "error", "message": "Gmail no disponible"}
 
-    # Buscamos correos recientes (no solo de compras, sino generales para Nexo)
-    results = service.users().messages().list(userId='me', maxResults=limit).execute()
+    # Buscamos correos bancarios sin filtrar por unread para tener historial
+    query = '(subject:"compra" OR subject:"transferencia" OR subject:"notificación" OR subject:"comprobante" OR subject:"pago")'
+    results = service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
     messages = results.get('messages', [])
 
     new_logs = 0
+    hoy = date.today()
+    
     for msg in messages:
         # Evitar duplicados
         exists = db.query(EmailLog).filter(EmailLog.gmail_id == msg['id']).first()
@@ -252,24 +333,56 @@ def sync_emails_with_nexo(db: Session, user_id: int, limit=10):
 
         msg_detail = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
         
+        # Detectar si está NO LEIDO en Gmail
+        labels = msg_detail.get('labelIds', [])
+        is_unread_in_gmail = 'UNREAD' in labels
+
         headers = msg_detail['payload']['headers']
         subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sin Asunto")
         sender = next((h['value'] for h in headers if h['name'] == 'From'), "Desconocido")
+        date_raw = next((h['value'] for h in headers if h['name'] == 'Date'), "")
         snippet = msg_detail.get('snippet', '')
         
-        # Nexo analiza el correo
-        analysis = analyze_single_email(subject, sender, snippet)
+        # Intentar parsear fecha real
+        obj_date = hoy
+        try:
+            from email.utils import parsedate_to_datetime
+            clean_date = re.sub(r'\(.*?\)', '', date_raw).strip()
+            obj_date = parsedate_to_datetime(clean_date).date()
+        except: pass
+
+        # Obtener cuerpo completo
+        full_body = get_email_body(msg_detail['payload'])
+        context_for_nexo = full_body if len(full_body) > 10 else snippet
         
-        # Guardamos en el historial de Nexo
+        # 1. Intentar Parser Determinista (Regex) - AHORRA IA
+        bank_data = parse_bank_email(subject, context_for_nexo, sender)
+        
+        if bank_data and bank_data.get("monto"):
+            category = "TRANSFERENCIA_ENVIADA" if bank_data.get("tipo") == "transferencia" else "COMPRA"
+            if bank_data.get("tipo") == "transferencia":
+                summary = f"Transferencia de ${bank_data['monto']:,} a {bank_data.get('destinatario', 'Tercero')}"
+            else:
+                summary = f"Compra de ${bank_data['monto']:,} en {bank_data.get('comercio', 'Comercio')}"
+        else:
+            # NO LLAMAR A IA AQUÍ para ahorrar cuota
+            category = "INFO_BANCARIA"
+            summary = f"{subject} ({snippet[:50]}...)"
+
+        # Solo nos interesan como 'no procesados' si son de HOY y NO LEIDOS
+        is_interesting_today = (obj_date == hoy and is_unread_in_gmail)
+
+        # Guardamos en el historial
         log = EmailLog(
             user_id=user_id,
             gmail_id=msg['id'],
             subject=subject,
             sender=sender,
-            summary=analysis.get("summary", "Sin resumen"),
-            category=analysis.get("category", "INFO"),
-            body_snippet=snippet,
-            processed=True
+            date=obj_date,
+            summary=summary,
+            category=category,
+            body_snippet=context_for_nexo[:1000],
+            processed=not is_interesting_today # Si es hoy/unread, queda False para que Lucio pregunte
         )
         db.add(log)
         new_logs += 1

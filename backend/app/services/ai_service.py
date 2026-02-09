@@ -1,7 +1,11 @@
 
 import os
 import json
+from dotenv import load_dotenv
+load_dotenv()
+
 import google.generativeai as genai
+from openai import OpenAI
 from sqlalchemy.orm import Session
 from app.models.budget import Category
 from app.models.finance import Expense, Commitment, EmailLog
@@ -46,18 +50,18 @@ Tu misión es detectar patrones, encontrar ahorros y responder preguntas complej
 Instrucción de Lúcio: "{user_message}"
 """
 
-# Configuración de Nexo (Agente especialista en Correos y Memoria)
+# Configuración de Nexo (Agente especialista en Correos Bancarios y Movimientos)
 NEXO_PROMPT = """
-Eres "Nexo", el enlace de comunicación y guardián de la memoria de Cerebro Finanzas.
-Tu especialidad es leer correos electrónicos, entenderlos y recordar todo lo que ha llegado.
+Eres "Nexo", el enlace de comunicación y guardián de los movimientos bancarios de Cerebro Finanzas.
+Tu misión es EXCLUSIVAMENTE financiera. No te interesan correos que no sean de bancos o de gastos.
 
 ### TUS RESPONSABILIDADES:
-1. **Análisis de Correos:** Identifica si un correo es una boleta, una factura, un aviso de cobro o simplemente informativo.
-2. **Memoria de Nexo:** Consulta el historial de correos del usuario para responder preguntas.
-3. **Resúmenes Ejecutivos:** Explica a Lúcio qué dicen los correos para que él se lo diga al usuario.
-4. **Respuesta:** Devuelve un análisis detallado de los correos relevantes.
+1. **Detección de Movimientos:** Identifica compras, transferencias (entrantes/salientes) y pagos de servicios.
+2. **Historial Bancario:** Consulta el historial de correos para responder sobre flujos de dinero.
+3. **Resúmenes Financieros:** Explica a Lúcio qué movimientos bancarios han ocurrido para que él se lo diga al usuario.
+4. **Respuesta:** Devuelve un análisis detallado centrado en montos, comercios y destinatarios.
 
-### CONTEXTO DE CORREOS (Historial de EmailLog):
+### CONTEXTO DE CORREOS BANCARIOS (EmailLog):
 {email_context}
 
 Instrucción de Lúcio: "{user_message}"
@@ -95,9 +99,19 @@ def analyze_single_email(subject, sender, snippet):
     model = genai.GenerativeModel('gemini-flash-latest')
     
     prompt = f"""
-    Analiza este correo y devuelve un JSON con:
-    - category: (GASTO, ALERTA, INFORMATIVO)
-    - summary: Breve resumen de 1 frase.
+    Eres un clasificador financiero experto para la app "Cerebro".
+    Analiza este correo y devuelve un JSON.
+    
+    INSTRUCCIONES CRÍTICAS:
+    1. Si es un comprobante de transferencia ENVIADA por el usuario, usa "TRANSFERENCIA_ENVIADA".
+    2. Si es una transferencia RECIBIDA, usa "TRANSFERENCIA_RECIBIDA".
+    3. En 'summary', incluye SIEMPRE el MONTO ($) y el NOMBRE de la persona o comercio.
+    
+    Ejemplo summary: "Transferencia de $12.780 enviada a Rodrigo Robles"
+    
+    Campos JSON:
+    - category: (COMPRA, TRANSFERENCIA_ENVIADA, TRANSFERENCIA_RECIBIDA, PAGO_SERVICIO, INFO_BANCARIA)
+    - summary: Resumen detallado (Monto + Sujeto).
     
     De: {sender}
     Asunto: {subject}
@@ -105,9 +119,28 @@ def analyze_single_email(subject, sender, snippet):
     """
     
     try:
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text)
-    except:
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        
+        # Intentar extraer JSON si viene envuelto, o parsear simple
+        if "{" in text and "}" in text:
+            import re
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group())
+                except: pass
+
+        # Fallback: buscar lineas clave
+        category = "INFO_BANCARIA"
+        summary = text[:200]
+        for line in text.split("\n"):
+            if "category" in line.lower(): category = line.split(":")[-1].strip().strip('"').strip("'")
+            if "summary" in line.lower(): summary = line.split(":")[-1].strip().strip('"').strip("'")
+            
+        return {"category": category, "summary": summary}
+    except Exception as e:
+        print(f"ERROR NEXO AI: {e}")
         return {"category": "INFO", "summary": "Correo de " + sender}
 
 def analyze_with_faro(user_message, expense_context, cat_context, comm_context):
@@ -178,8 +211,12 @@ def process_finance_message(db: Session, user_id: int, message: str, extra_conte
     commitments = db.query(Commitment).filter(Commitment.user_id == user_id).order_by(Commitment.id.desc()).limit(10).all()
     comm_context = "\n".join([f" - ID: {c.id} | {'DEBO' if c.type == 'DEBT' else 'ME DEBEN'} | ${c.total_amount} | {c.title} | Estado: {c.status}" for c in commitments])
 
-    emails = db.query(EmailLog).filter(EmailLog.user_id == user_id).order_by(EmailLog.date.desc()).limit(10).all()
-    email_context = "\n".join([f" - [{e.date}] {e.sender}: {e.subject} ({e.summary})" for e in emails])
+    emails = db.query(EmailLog).filter(EmailLog.user_id == user_id).order_by(EmailLog.date.desc()).limit(15).all()
+    hoy_dt = datetime.now().date()
+    email_context = "\n".join([
+        f" - [{e.date}] {'(NUEVO - HOY - PENDIENTE)' if (not e.processed and e.date == hoy_dt) else ''} {e.sender}: {e.subject} ({e.summary})" 
+        for e in emails
+    ])
 
     chat_history_txt = ""
     if history:
@@ -193,19 +230,10 @@ def process_finance_message(db: Session, user_id: int, message: str, extra_conte
         print(f"[DEBUG] Llamando a Miguel para analizar boleta...")
         miguel_actions = analyze_with_miguel(image_data, message, sections_list)
     
-    # CASO ESPECIAL: ANÁLISIS (Llamamos a Faro)
+    # --- ELIMINADOS LOS LLAMADOS INDEPENDIENTES PARA AHORRAR CUOTA ---
+    # Lúcio ahora procesará todo el contexto directamente.
     faro_insights = None
-    keywords_analytics = ["resumen", "patrón", "ahorro", "predicción", "análisis", "cuánto", "gasto", "total", "promedio"]
-    if any(k in message.lower() for k in keywords_analytics):
-        print(f"[DEBUG] Llamando a Faro para análisis de datos...")
-        faro_insights = analyze_with_faro(message, expense_context, cat_context, comm_context)
-
-    # CASO ESPECIAL: CORREOS (Llamamos a Nexo)
     nexo_insights = None
-    keywords_emails = ["correo", "mail", "recibí", "llego", "gmail", "mensaje", "nexo"]
-    if any(k in message.lower() for k in keywords_emails):
-        print(f"[DEBUG] Llamando a Nexo para historial de correos...")
-        nexo_insights = analyze_with_nexo(message, email_context)
 
     # Prompt de Lúcio (Orquestador y Cara del app)
     prompt = f"""
@@ -222,21 +250,27 @@ Tu estilo es ejecutivo pero amigable.
 - Coordinas a tu equipo bajo cuerda. 
 - Si Faro te pasó un análisis, úsalo para responder la pregunta técnica.
 - Si Miguel te pasó acciones, confírmalas.
-- Si Nexo encontró información en los correos, preséntala.
+- Si Nexo encontró información en los correos (transferencias enviadas, recibidas, compras), NO asumas que el usuario solo busca ingresos. Informa TODO movimiento relevante con detalle de monto y destinatario/comercio.
+- **PROACTIVIDAD CONDICIONAL:** 
+  1. Si ves movimientos marcados como `(NUEVO - HOY - PENDIENTE)`, debes mencionarlos y preguntar dónde registrarlos.
+  2. Si NO hay movimientos de HOY pendientes, compórtate como Lúcio normal: responde la duda del usuario usando a tus 3 expertos (Miguel, Faro, Nexo) según sea necesario, pero sin forzar el registro de correos antiguos.
 
 ### CONTEXTO DINÁMICO:
 Fecha: {hoy}
 SECCIONES: [{sections_list}]
 HISTORIAL: {chat_history_txt}
 
-### INFORMACIÓN DE TU EQUIPO:
-- ANÁLISIS DE FARO: {faro_insights if faro_insights else "Faro no ha intervenido."}
-- MEMORIA DE NEXO (EMAILS): {nexo_insights if nexo_insights else "Nexo no ha intervenido."}
-- ACCIONES DE MIGUEL: {json.dumps(miguel_actions, indent=2) if miguel_actions else "Miguel no ha intervenido."}
+### INFORMACIÓN DE TU EQUIPO (CONTEXTO):
+- **DATOS DE GASTOS (Faro):** {expense_context if expense_context else "Sin gastos registrados."}
+- **DATOS DE CATEGORÍAS/PRESUPUESTO:** {cat_context}
+- **REGISTRO DE CORREOS BANCARIOS (Nexo):** {email_context if email_context else "Sin correos recientes."}
+- **COMPROMISOS/DEUDAS:** {comm_context if comm_context else "Sin compromisos."}
+- **ACCIONES DE MIGUEL (Boleta):** {json.dumps(miguel_actions, indent=2) if miguel_actions else "Miguel no ha intervenido."}
 
 ### INSTRUCCIONES DE RESPUESTA:
 - **FORMATO:** Devuelve ÚNICAMENTE un objeto JSON.
-- **TONO:** Lúcio es brillante y cercano.
+- **TONO:** Lúcio es brillante, atento y proactivo. 
+- **IMPARCIALIDAD:** Si el usuario pregunta "¿llegó una transferencia?", revisa tanto las recibidas como las que él mismo realizó (comprobantes de envío).
 - **INTEGRACIÓN:** Si Faro dio un consejo de ahorro, preséntalo como algo que "tú y tu equipo de análisis" prepararon.
 
 ### JSON SCHEMA OBLIGATORIO:
@@ -251,25 +285,31 @@ MENSAJE DEL USUARIO: "{message}"
     if not gemini_key:
         return {"status": "error", "message": "No hay API Key de Gemini configurada."}
 
+    # --- LÚCIO USA OPENAI PARA NO FRENAR LA CONVERSACIÓN ---
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        return {"status": "error", "message": "No hay API Key de OpenAI configurada para Lúcio."}
+    
+    client = OpenAI(api_key=openai_key)
+
     try:
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-flash-latest')
-        
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message}
+            ],
+            response_format={ "type": "json_object" }
         )
-        text_response = response.text.strip()
+        
+        text_response = response.choices[0].message.content.strip()
         
         try:
             data = json.loads(text_response)
-            # Si Miguel dio acciones pero Lúcio no las incluyó explícitamente en el JSON,
-            # pero sí las mencionó en el texto, las inyectamos.
             if miguel_actions and not data.get("actions"):
                 data["actions"] = miguel_actions
                 data["intent"] = "MULTI_ACTION"
         except Exception as e:
-            # Fallback: buscar JSON con regex si falló el parseo directo
             import re
             match = re.search(r'\{.*\}', text_response, re.DOTALL)
             if match:
@@ -279,11 +319,12 @@ MENSAJE DEL USUARIO: "{message}"
                     data = {"intent": "TALK", "response_text": text_response}
             else:
                 data = {"intent": "TALK", "response_text": text_response}
-            
-        print(f"DEBUG AI DATA (LÚCIO): {data}")
+        
         return {"status": "success", "data": _normalize_ai_data(data, message)}
+
     except Exception as e:
-        return {"status": "error", "message": "Error técnico lúcio: " + str(e)}
+        print(f"ERROR LÚCIO (OpenAI): {e}")
+        return {"status": "error", "message": "Error técnico lúcio (OpenAI): " + str(e)}
 
 def _normalize_ai_data(data, user_message=None):
     if isinstance(data, list):

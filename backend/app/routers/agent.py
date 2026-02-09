@@ -131,10 +131,11 @@ async def chat_with_agent(
         img_bytes = await image.read()
 
     # 0. Sincronizar correos si el usuario habla de ellos (Nexo se activa)
-    if user_msg and any(k in user_msg.lower() for k in ["correo", "mail", "recibí", "nexo", "gmail"]):
+    nexo_triggers = ["correo", "mail", "recibí", "nexo", "gmail", "transferencia", "compra", "movimiento", "llegó", "llego"]
+    if user_msg and any(k in user_msg.lower() for k in nexo_triggers):
         from app.services.gmail_service import sync_emails_with_nexo
         try:
-            sync_emails_with_nexo(db, current_user.id)
+            sync_emails_with_nexo(db, current_user.id, limit=25)
         except Exception as e:
             print(f"Error en trigger de Nexo: {e}")
 

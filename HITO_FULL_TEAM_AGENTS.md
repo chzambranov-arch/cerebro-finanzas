@@ -1,30 +1,33 @@
-# HITO: THE FANTASTIC FOUR - Lúcio, Miguel, Faro y Nexo (Sin Dependencia Bancaria)
-Fecha: 2026-02-08
+# HITO: THE FANTASTIC FOUR v2.0 - Cerebro Híbrido y Especialización Bancaria
+Fecha: 2026-02-09
 
-## Resumen del Hito (TEAM CEREBRO FULL AGENTS)
-Se ha consolidado el equipo de 4 agentes estrella de Cerebro. La gran ventaja de este sistema es que **no depende de APIs bancarias directas ni integraciones rígidas con bancos**, lo que permite una flexibilidad total y privacidad absoluta. El equipo lee, entiende y actúa basándose en lo que tú ves y recibes.
+## Resumen del Hito: La Evolución del Tridente
+Tras consolidar el equipo, hemos dado el salto a la **Especialización Financiera Profunda**. El sistema ya no solo "lee correos", sino que entiende la estructura bancaria chilena y opera con una inteligencia híbrida que elimina las barreras de cuota.
 
-## Los 4 Agentes en Acción
-1.  **LÚCIO (El Orquestador):**
-    *   Tu única interfaz. Inteligente, amigable y ejecutivo. Coordina al equipo y te presenta resultados claros.
+## Avances Clave (Post-Integración Bancaria)
 
-2.  **MIGUEL (El Especialista de Campo):**
-    *   **Poder OCR:** Lee boletas de cualquier comercio, restaurante o servicio. 
-    *   **Matemática de División:** Divide cuentas entre amigos o familia instantáneamente sin errores manuales.
+### 1. Cerebro Híbrido (Lúcio + OpenAI)
+- **LÚCIO** ha sido migrado a **OpenAI (GPT-4o)** para su conversación principal.
+- **Resultado:** Se eliminaron los bloqueos de cuota (Error 429). Lúcio ahora es "inmortal" y mucho más inteligente en su razonamiento y orquestación.
 
-3.  **FARO (El Científico de Datos):**
-    *   **Analista de Tendencias:** Detecta en qué gastas, cuánto proyectas gastar a fin de mes y dónde tienes fugas de dinero.
-    *   **Generador de Insights:** Te da información procesable para que tomes mejores decisiones financieras.
+### 2. Nexo: Especialista Bancario (Chile Focus)
+- **Parser de Ultra-Precisión:** Nexo ahora cuenta con motores de reglas locales para los principales bancos de Chile (Banco de Chile, Santander, BCI, Scotiabank, Itaú, BancoEstado, Falabella).
+- **Consumo Zero:** El escaneo de correos ahora es **local y gratuito**. No consume créditos de IA para detectar transferencias y compras.
+- **Visión 360°:** Nexo ahora es imparcial; detecta tanto las transferencias que recibes como los comprobantes de las que tú envías.
 
-4.  **NEXO (El Guardián de Memoria y Gmail):**
-    *   **Email Intelligence:** Lee tus correos de confirmación, boletas digitales y avisos de cobro.
-    *   **Almacenamiento Local:** Mantiene un historial inteligente de tus comunicaciones financieras para responder preguntas del pasado.
+### 3. Proactividad Selectiva
+- **Instinto de Guardian:** Lúcio ahora detecta si tienes correos bancarios de **HOY** que no han sido leídos y te pregunta proactivamente si deseas registrarlos.
+- **Memoria de Consulta:** Mantiene el acceso a correos antiguos para cuando tú decidas preguntar por ellos.
 
-## Fortalezas del Sistema "Sin Bancos"
-- **Privacidad Total:** No necesitamos tus claves bancarias ni acceso a tus cuentas. Solo procesamos lo que llega a tu correo o lo que tú fotografías.
-- **Universalidad:** Funciona con cualquier banco, tarjeta o método de pago, porque Nexo y Miguel entienden el lenguaje natural de las boletas y correos.
-- **Memoria Persistente:** Nexo guarda logs de tus correos para que la información financiera sea tuya y esté siempre a mano.
+### 4. Miguel y Faro (Potenciados)
+- **Miguel** sigue siendo nuestro experto en OCR (Gemini) para procesar fotos de boletas sin costo de OpenAI.
+- **Faro** ahora vive integrado en el razonamiento de Lúcio, analizando tendencias con la potencia de GPT-4o.
+
+## Fortalezas Actuales
+- **Resiliencia:** El sistema combina lo mejor de dos mundos: la visión gratuita de Gemini y la potencia conversacional de OpenAI.
+- **Independencia Bancaria Real:** Sin APIs bancarias, pero con la misma precisión que si las tuviéramos.
+- **Velocidad:** Respuesta instantánea y escaneo de Gmail optimizado.
 
 ---
-**Estado Actual:** 🔥 EQUIPO DE 4 AGENTES OPERATIVO Y SIN DEPENDENCIAS EXTERNAS.
-**Próximo Paso:** Entrenamiento de patrones complejos en Faro y Nexo.
+**Estado Actual:** 🛡️ EQUIPO BLINDADO, HÍBRIDO Y CON FOCO BANCARIO TOTAL.
+**Commit:** `Hito 2.0: Fantastic Four con Foco Bancario e Inteligencia Híbrida`
