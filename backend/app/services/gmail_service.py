@@ -8,9 +8,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
-from sqlalchemy.orm import Session
-from app.models.finance import Expense
+from app.models.finance import Expense, EmailLog
 from app.services.sheets_service import sync_expense_to_sheet
+from app.services.ai_service import analyze_single_email
 
 # If modifying these scopes, delete the file token_gmail.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
@@ -231,3 +231,48 @@ def process_recent_emails(db: Session, user_id: int, user_name: str, limit=10):
         "processed": processed_count, 
         "details": new_expenses
     }
+
+def sync_emails_with_nexo(db: Session, user_id: int, limit=10):
+    """
+    Nexo sincroniza los correos, los entiende y los guarda en el historial.
+    """
+    service = get_gmail_service()
+    if not service:
+        return {"status": "error", "message": "Gmail no disponible"}
+
+    # Buscamos correos recientes (no solo de compras, sino generales para Nexo)
+    results = service.users().messages().list(userId='me', maxResults=limit).execute()
+    messages = results.get('messages', [])
+
+    new_logs = 0
+    for msg in messages:
+        # Evitar duplicados
+        exists = db.query(EmailLog).filter(EmailLog.gmail_id == msg['id']).first()
+        if exists: continue
+
+        msg_detail = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+        
+        headers = msg_detail['payload']['headers']
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "Sin Asunto")
+        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Desconocido")
+        snippet = msg_detail.get('snippet', '')
+        
+        # Nexo analiza el correo
+        analysis = analyze_single_email(subject, sender, snippet)
+        
+        # Guardamos en el historial de Nexo
+        log = EmailLog(
+            user_id=user_id,
+            gmail_id=msg['id'],
+            subject=subject,
+            sender=sender,
+            summary=analysis.get("summary", "Sin resumen"),
+            category=analysis.get("category", "INFO"),
+            body_snippet=snippet,
+            processed=True
+        )
+        db.add(log)
+        new_logs += 1
+
+    db.commit()
+    return {"status": "success", "new_emails_processed": new_logs}

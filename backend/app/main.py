@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.database import engine, Base
 from fastapi.staticfiles import StaticFiles
 from app.routers import auth, users, finance, commitments, setup, agent, webhooks
-from app.models.finance import Expense, Commitment, PendingExpense  # Import to register with Base
+from app.models.finance import Expense, Commitment, PendingExpense, EmailLog  # Import to register with Base
 from app.models.budget import Budget, Category, AppConfig  # Import budget models
 
 # Create tables on startup (simple for MVP)

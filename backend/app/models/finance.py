@@ -55,3 +55,18 @@ class PushSubscription(Base):
     auth = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class EmailLog(Base):
+    __tablename__ = "email_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    gmail_id = Column(String, unique=True, index=True)
+    subject = Column(String)
+    sender = Column(String)
+    date = Column(DateTime, default=datetime.utcnow)
+    summary = Column(Text) # Breve resumen capturado por Nexo
+    category = Column(String) # 'GASTO', 'ALERTA', 'INFORMATIVO'
+    body_snippet = Column(Text) # Un trozo del contenido original
+    processed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
