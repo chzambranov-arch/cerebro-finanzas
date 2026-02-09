@@ -3,11 +3,11 @@ import base64
 import re
 from typing import List, Optional
 from datetime import date, datetime
+from sqlalchemy.orm import Session
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from bs4 import BeautifulSoup
 from app.models.finance import Expense, EmailLog
 from app.services.sheets_service import sync_expense_to_sheet
 from app.services.ai_service import analyze_single_email
