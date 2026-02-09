@@ -6,209 +6,228 @@ from sqlalchemy.orm import Session
 from app.models.budget import Category
 from app.models.finance import Expense, Commitment
 from app.models.models import User
+from datetime import datetime
 
-def process_finance_message(db: Session, user_id: int, message: str, extra_context: str = None, history: list = None):
+# Configuración de Miguel (Agente especialista en OCR y Cálculos)
+MIGUEL_PROMPT = """
+Eres "Miguel", el especialista técnico en OCR y análisis matemático de Cerebro Finanzas.
+### TUS RESPONSABILIDADES:
+1. **OCR de Precisión:** Lee cada ítem, su precio y el TOTAL final. No inventes datos.
+2. **Cálculos de División:** Si Lúcio te pide 'dividir', calcula exactamente cuánto le toca a cada uno según los nombres mencionados.
+3. **Sección/Carpeta:** Si el mensaje del usuario NO menciona una carpeta existente, deja la sección como null.
+4. **Respuesta:** Devuelve ÚNICAMENTE un array JSON de acciones técnicas.
+
+### FORMATO DE SALIDA (JSON):
+[
+  {{ "intent": "CREATE", "amount": 100, "category": "Tag", "concept": "Desc", "section": "Folder o null" }},
+  {{ "intent": "CREATE_COMMITMENT", "amount": 100, "category": "Persona", "concept": "Motivo", "commitment_type": "LOAN" }}
+]
+
+Instrucción del usuario: "{user_message}"
+Contexto de carpetas actuales: {sections_list}
+"""
+
+# Configuración de Faro (Agente especialista en Análisis y Patrones)
+FARO_PROMPT = """
+Eres "Faro", el cerebro matemático y analista de datos de Cerebro Finanzas.
+Tu misión es detectar patrones, encontrar ahorros y responder preguntas complejas sobre el dinero.
+
+### TUS RESPONSABILIDADES:
+1. **Detección de Patrones:** ¿Dónde está gastando más el usuario? ¿Qué días gasta más?
+2. **Resúmenes Matemáticos:** Sumas por categorías, comparativas con el presupuesto.
+3. **Predicciones y Ahorro:** Basado en los gastos recientes, ¿cuánto gastará al final de mes? ¿Dónde puede recortar?
+4. **Respuesta:** Devuelve un resumen técnico y analítico que Lúcio le presentará al usuario.
+
+### CONTEXTO DISPONIBLE:
+- GASTOS: {expense_context}
+- CATEGORÍAS: {cat_context}
+- COMPROMISOS: {comm_context}
+
+Instrucción de Lúcio: "{user_message}"
+"""
+
+def analyze_with_faro(user_message, expense_context, cat_context, comm_context):
     """
-    Procesa un mensaje de lenguaje natural usando OpenAI (ChatGPT) o Gemini como fallback.
+    Faro analiza los datos y devuelve insights.
     """
-    openai_key = os.getenv("OPENAI_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key: return "Faro no tiene acceso a sus herramientas."
+    
+    genai.configure(api_key=gemini_key)
+    model = genai.GenerativeModel('gemini-flash-latest')
+    prompt = FARO_PROMPT.format(
+        user_message=user_message,
+        expense_context=expense_context,
+        cat_context=cat_context,
+        comm_context=comm_context
+    )
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"ERROR FARO: {e}")
+        return "Faro tuvo un problema analizando los datos."
 
-    # 1. Preparar Contexto común (Categorías y Gastos)
+def analyze_with_miguel(image_data: bytes, user_message: str, sections_list: str):
+    """
+    Miguel analiza la boleta y devuelve la lista de acciones técnicas.
+    """
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return None
+    
+    genai.configure(api_key=gemini_key)
+    model = genai.GenerativeModel('gemini-flash-latest')
+    
+    prompt = MIGUEL_PROMPT.format(user_message=user_message, sections_list=sections_list)
+    
+    mime = "image/png" if image_data.startswith(b'\x89PNG') else "image/jpeg"
+    content = [prompt, {'mime_type': mime, 'data': image_data}]
+    
+    try:
+        response = model.generate_content(
+            content,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        data = json.loads(response.text)
+        return data if isinstance(data, list) else [data]
+    except Exception as e:
+        print(f"ERROR MIGUEL: {e} | Raw: {response.text if 'response' in locals() else 'No response'}")
+        return None
+
+def process_finance_message(db: Session, user_id: int, message: str, extra_context: str = None, history: list = None, image_data: bytes = None):
+    """
+    Lúcio es el director de orquesta. Si hay imagen, llama a Miguel.
+    """
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    
+    # 1. Preparar Contexto común
     categories = db.query(Category).filter(Category.user_id == user_id).all()
-    # Agrupamos por secciones para el contexto
     sections = set([c.section for c in categories])
     sections_list = ", ".join(sections)
-    
     cat_context = "\n".join([f"- [{c.section}] -> {c.name} (Presupuesto: ${c.budget:,})" for c in categories])
     
     recent_expenses = db.query(Expense).filter(Expense.user_id == user_id).order_by(Expense.id.desc()).limit(15).all()
-    expense_context_list = [f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}" for e in recent_expenses]
-    expense_context = "\n".join(expense_context_list)
+    expense_context = "\n".join([f" - ID: {e.id} | {e.date} | ${e.amount} | {e.concept} | [{e.section}] {e.category}" for e in recent_expenses])
     
-    # 2. Compromisos (Debo / Me Deben)
     commitments = db.query(Commitment).filter(Commitment.user_id == user_id).order_by(Commitment.id.desc()).limit(10).all()
-    comm_context_list = []
-    for c in commitments:
-        c_type = "DEBO" if c.type == 'DEBT' else "ME DEBEN"
-        comm_context_list.append(f" - ID: {c.id} | {c_type} | ${c.total_amount} | {c.title} | Estado: {c.status}")
-    comm_context = "\n".join(comm_context_list)
+    comm_context = "\n".join([f" - ID: {c.id} | {'DEBO' if c.type == 'DEBT' else 'ME DEBEN'} | ${c.total_amount} | {c.title} | Estado: {c.status}" for c in commitments])
 
-    # 3. Historial de Chat
     chat_history_txt = ""
     if history:
-        # Aseguramos el orden cronológico
         chat_history_txt = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in history])
 
-    from datetime import datetime
     hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # CASO ESPECIAL: IMAGEN (Llamamos a Miguel)
+    miguel_actions = None
+    if image_data:
+        print(f"[DEBUG] Llamando a Miguel para analizar boleta...")
+        miguel_actions = analyze_with_miguel(image_data, message, sections_list)
+    
+    # CASO ESPECIAL: ANÁLISIS (Llamamos a Faro)
+    faro_insights = None
+    keywords_analytics = ["resumen", "patrón", "ahorro", "predicción", "análisis", "cuánto", "gasto", "total", "promedio"]
+    if any(k in message.lower() for k in keywords_analytics):
+        print(f"[DEBUG] Llamando a Faro para análisis de datos...")
+        faro_insights = analyze_with_faro(message, expense_context, cat_context, comm_context)
+
+    # Prompt de Lúcio (Orquestador y Cara del app)
     prompt = f"""
-Eres "Lúcio", asistente y coach financiero personal.
-Fecha actual: {hoy}
+Eres "Lúcio", el asistente financiero y cara visible de Cerebro. 
+Tu estilo es ejecutivo pero amigable. 
 
-Tu rol:
-- Ejecutar acciones financieras con precisión (Gastos, Categorías, Compromisos).
-- Mantener la integridad de los datos.
-- Desambiguar usando el historial de conversación.
+### TU EQUIPO:
+1. **Miguel (Ingeniero de campo):** Lee boletas (OCR) y hace divisiones matemáticas simples.
+2. **Faro (Científico de datos):** Analiza tendencias, predice gastos y busca ahorros.
 
-DIRECTIVA SUPREMA (NO IGNORAR):
-- Si el usuario dice "Nombre_Item Monto" (ej: "Arriendo 120", "Sushi 15000"), tu respuesta DEBE ser `intent="CREATE"`.
-- ESTÁ PROHIBIDO usar `intent="UPDATE_CATEGORY"` para estos casos, A MENOS que la frase incluya explícitamente "Saldo", "Presupuesto" o "Cambiar nombre".
-- "Arriendo 120" = Gasto de 120 en Arriendo.
-- "Arriendo saldo 120" = Cambiar presupuesto a 120.
+### TU ROL:
+- Eres el único que habla con el cliente.
+- Coordinas a tu equipo bajo cuerda. 
+- Si Faro te pasó un análisis, úsalo para responder la pregunta técnica.
+- Si Miguel te pasó acciones, confírmalas.
 
-────────────────────────
-CONTEXTO DINÁMICO
-────────────────────────
+### CONTEXTO DINÁMICO:
+Fecha: {hoy}
+SECCIONES: [{sections_list}]
+HISTORIAL: {chat_history_txt}
 
-SECCIONES (CARPETAS) EXISTENTES:
-[{sections_list}]
+### INFORMACIÓN DE TU EQUIPO:
+- ANÁLISIS DE FARO: {faro_insights if faro_insights else "Faro no ha intervenido en este turno."}
+- ACCIONES DE MIGUEL: {json.dumps(miguel_actions, indent=2) if miguel_actions else "Miguel no ha intervenido en este turno."}
 
-JERARQUÍA DE CATEGORÍAS (Section -> Item):
-{cat_context}
+### INSTRUCCIONES DE RESPUESTA:
+- **FORMATO:** Devuelve ÚNICAMENTE un objeto JSON.
+- **TONO:** Lúcio es brillante y cercano.
+- **INTEGRACIÓN:** Si Faro dio un consejo de ahorro, preséntalo como algo que "tú y tu equipo de análisis" prepararon.
 
-GASTOS RECIENTES (ÚSALOS SOLO PARA REFERENCIA):
-{expense_context}
-
-COMPROMISOS RECIENTES:
-{comm_context}
-
-HISTORIAL RECIENTE (CRÍTICO - MEMORIA CONVERSACIONAL):
-{chat_history_txt}
-
-────────────────────────
-REGLAS MAESTRAS DE EJECUCIÓN (ORDEN DE PRIORIDAD)
-────────────────────────
-
-## FASE 0: FUSIBLES DE CONTEXTO (EVALUAR PRIMERO)
-🚨 SI ALGUNA DE ESTAS REGLAS SE CUMPLE, DETENTE Y GENERA LA SALIDA. NO SIGAS LEYENDO. 🚨
-
-1. **COMPLETAR DATOS DE COMPROMISO (MÁXIMA PRIORIDAD):**
-   - **Detección:** Si tu último mensaje (-1) CONTIENE la frase "🛑 Faltan datos para el compromiso".
-   - **ACCIÓN:** El mensaje actual es el DATO FALTANTE (probablemente el Concepto).
-   - **EJECUCIÓN:**
-     1. Recupera la Persona y Monto del mensaje del usuario de hace 2 turnos (-2).
-     2. **DEFINE EL TIPO (CRÍTICO):**
-        - Si el mensaje (-2) decía "me debe", "me deben" -> `commitment_type="LOAN"`.
-        - Si el mensaje (-2) decía "le debo", "debo" -> `commitment_type="DEBT"`.
-   - **SALIDA:** `intent="CREATE_COMMITMENT"`, `category="PersonaRecuperada"`, `amount=MontoRecuperado`, `concept="<USER_MESSAGE>"`, `commitment_type="TIPO_DEFINIDO"`.
-
-2. **CORRECCIÓN DE CARPETA / DUPLICADOS:**
-   - **Detección:** Si tu último mensaje (-1) preguntaba "¿En qué carpeta...?", "¿A cuál corresponde?" o decia "**no existe en tu presupuesto**".
-   - **ACCIÓN:** RECUPERA el ÍTEM y el MONTO del mensaje del usuario de hace 2 turnos (-2). Usa el mensaje ACTUAL como la SECCIÓN.
-   - **SALIDA:** `intent="CREATE"`, `category="ItemRecuperado"`, `amount=MontoRecuperado`, `section="TEXTO_EXACTO_DEL_MENSAJE_ACTUAL"`.
-
-3. **STICKY CONTEXT GENÉRICO:** 
-   - Si tu mensaje anterior (-1) hizo cualquier otra pregunta DIRECTA, asume que la respuesta actual es para eso.
-
---- SI NO ACTIVASTE NINGÚN FUSIBLE ARRIBA, CONTINÚA CON FASE 1 ---
-
-## FASE 1: NUEVOS COMANDOS (EVALUACIÓN FINANCIERA)
-
-
-
-### SECCIÓN A: GASTOS (CEREBRO DE CAJERO)
-- **ALERTA REGRESIÓN (ÍTEMS EXISTENTES):** Si el usuario dice **"Nombre_Item Monto"** (ej: "Arriendo 120", "Sushi 15000") y el ítem **YA EXISTE** en la lista:
-  - **ACCIÓN:** Es **SIEMPRE** `intent="CREATE"`. (Registrar gasto).
-  - **PROHIBICIÓN:** NO uses `UPDATE_CATEGORY` (Presupuesto) a menos que diga explícitamente "saldo" o "presupuesto".
-- **ÍTEMS NUEVOS (ARRIENDO 120):** Si un ítem NO EXISTE y el usuario solo da Nombre y Monto:
-  - **ACCIÓN:** Genera `intent="TALK"` y pregunta: "El ítem 'X' no existe en tu presupuesto. ¿En qué carpeta (sección) quieres crearlo?"
-- **ITEM EN CARPETA EXISTENTE (ACCESO RÁPIDO):**
-  - **Detección:** Si el usuario dice explícitamente "Pon X en la carpeta Y", "Agrega X a Y".
-  - **INTENT: CREATE**, `category="X"`, `section="Y"`.
-
-### SECCIÓN B: COMPROMISOS (DEUDAS / PRÉSTAMOS)
-- **CREAR COMPROMISO (`CREATE_COMMITMENT`):** "Debo", "Me deben", "X me debe".
-  * **REGLA DE ORO (ESTRICTEZA):** DEBES tener 3 DATOS reales:
-    1. **QUIÉN** (`category`): Persona.
-    2. **CUÁNTO** (`amount`): Monto.
-    3. **QUÉ** (`concept`): Motivo específico (ej: "Pizza", "Entradas", "Asado").
-  * **VALIDACIÓN:** Si falta el Motivo o es genérico (ej: "plata", "deuda"):
-    - **PROHIBICIÓN:** NO generes el compromiso. NO inventes motivos.
-    - **ACCIÓN:** Genera `intent="TALK"`. Di: "🛑 Faltan datos para el compromiso: por qué concepto (motivo específico). ¿Podrías completarlo?"
-  * **CAMPOS:** `commitment_type="DEBT"` (si debe) o `"LOAN"` (si le deben).
-
-### SECCIÓN C: GESTIÓN DE COMPROMISOS (PAGOS / BORRADOS)
-- **MARCAR PAGADO (`MARK_PAID_COMMITMENT`):** "Ya pagué", "Me pagaron", "Saldar deuda", "Pagado".
-  - **PROHIBICIÓN:**
-    - Si dice "Me debe", "Le debo", "Debo" (PRESENTE): ESO NO ES PAGADO. ES SECCIÓN B (CREAR).
-  - **ACCIÓN:** Busca en la lista de "Compromisos" el ID correspondiente.
-  - **SALIDA:** `intent="MARK_PAID_COMMITMENT"`, `target_id=ID_ENCONTRADO`.
-- **BORRAR COMPROMISO (`DELETE_COMMITMENT`):** "Borra la deuda", "Elimina el compromiso".
-  - **ACCIÓN:** Busca el ID en la lista.
-  - **SALIDA:** `intent="DELETE_COMMITMENT"`, `target_id=ID_ENCONTRADO`.
-
-### SECCIÓN D: PRESUPUESTO, SALDOS Y CONFIGURACIÓN
-- `CREATE_CATEGORY`: "Crea la carpeta X" o "Nuevo ítem Y en X".
-- `DELETE_CATEGORY`: "Borra la sección X" o "Elimina el ítem Y".
-- `UPDATE_CATEGORY`: RENOMBRAR, MOVER o CAMBIAR SALDOS (Solo si dice "Saldo" o "Presupuesto").
-- **INCREMENTO SALDO:** "Suma X al presupuesto de Y" -> `intent="UPDATE_CATEGORY"`, `amount=X`.
-- **REEMPLAZO SALDO:** "Cambia el saldo de Y a X" -> `intent="UPDATE_CATEGORY"`, `amount=X`, `concept="SET_BUDGET"`.
-
-────────────────────────
-FORMATO JSON DE SALIDA
-────────────────────────
+### JSON SCHEMA OBLIGATORIO:
 {{
-  "intent": "CREATE | UPDATE | DELETE | TALK | CREATE_CATEGORY | UPDATE_CATEGORY | ...",
-  "target_type": "SECTION | CATEGORY",
-  "section": "Nombre de la Carpeta",
-  "category": "Nombre del Item",
-  "new_name": "Nuevo Nombre (si aplica)",
-  "new_section": "Nueva Carpeta (si aplica)",
-  "amount": 0,
-  "concept": "Razón o Nota",
-  "response_text": "Texto respuesta."
+  "intent": "MULTI_ACTION | TALK",
+  "response_text": "Tu mensaje para el usuario",
+  "actions": [ ... acciones de Miguel o cualquier CREATE/COMMITMENT que Lúcio deba hacer ...]
 }}
 
-MENSANJE DEL USUARIO:
-"{message}"
-    """
-
-    # --- (rest of the logic) ---
-
-    # --- INTENTAR OPENAI PRIMERO SI HAY KEY ---
-    if openai_key and len(openai_key) > 10:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=openai_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "system", "content": "Eres Lúcio, experto financiero."}, {"role": "user", "content": prompt}],
-                response_format={ "type": "json_object" }
-            )
-            data = json.loads(response.choices[0].message.content)
-            return {"status": "success", "data": _normalize_ai_data(data, message)}
-        except Exception as e:
-            print(f"OpenAI Error: {e}")
-
-    # --- FALLBACK A GEMINI ---
+MENSAJE DEL USUARIO: "{message}"
+"""
     if not gemini_key:
-        return {"status": "error", "message": "No hay API Keys configuradas (Gemini/OpenAI)"}
+        return {"status": "error", "message": "No hay API Key de Gemini configurada."}
 
     try:
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        text_response = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(text_response)
-        print(f"DEBUG AI DATA: {data}")
+        model = genai.GenerativeModel('gemini-flash-latest')
+        
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        text_response = response.text.strip()
+        
+        try:
+            data = json.loads(text_response)
+            # Si Miguel dio acciones pero Lúcio no las incluyó explícitamente en el JSON,
+            # pero sí las mencionó en el texto, las inyectamos.
+            if miguel_actions and not data.get("actions"):
+                data["actions"] = miguel_actions
+                data["intent"] = "MULTI_ACTION"
+        except Exception as e:
+            # Fallback: buscar JSON con regex si falló el parseo directo
+            import re
+            match = re.search(r'\{.*\}', text_response, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except:
+                    data = {"intent": "TALK", "response_text": text_response}
+            else:
+                data = {"intent": "TALK", "response_text": text_response}
+            
+        print(f"DEBUG AI DATA (LÚCIO): {data}")
         return {"status": "success", "data": _normalize_ai_data(data, message)}
     except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "ResourceExhausted" in error_msg:
-            return {"status": "error", "message": "Lúcio está agotado (Límite de Google)."}
-        return {"status": "error", "message": "Error técnico: " + error_msg}
+        return {"status": "error", "message": "Error técnico lúcio: " + str(e)}
 
 def _normalize_ai_data(data, user_message=None):
     if isinstance(data, list):
         return [_normalize_ai_data(item, user_message) for item in data]
         
     if isinstance(data, dict):
+        # Si tiene una lista de acciones (MULTI_ACTION), normalizar cada una
+        if "actions" in data and isinstance(data["actions"], list):
+             data["actions"] = [_normalize_ai_data(a, user_message) for a in data["actions"]]
+             data["intent"] = "MULTI_ACTION"
+
         if data.get("concept") == "<USER_MESSAGE>" and user_message:
             data["concept"] = user_message
 
         if data.get("intent") == "CREATE":
             if not data.get("concept"): data["concept"] = data.get("category", "Gasto")
-            if not data.get("section"): data["section"] = "OTROS"
+            
+        # Limpieza básica de montos
+        if "amount" in data and data["amount"] is not None:
+            try:
+                if isinstance(data["amount"], str):
+                    data["amount"] = float(data["amount"].replace("$", "").replace(".", "").replace(",", ""))
+            except: pass
     return data

@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
@@ -88,30 +88,33 @@ def check_pending_expenses(
     )
 
 @router.post("/chat", response_model=ChatResponse)
-def chat_with_agent(
-    request: ChatRequest,
+async def chat_with_agent(
     background_tasks: BackgroundTasks,
+    message: str = Form(""),
+    pending_id: Optional[int] = Form(None),
+    image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Endpoint para interactuar con el agente 'Lúcio'.
+    Endpoint para interactuar con el agente 'Lúcio'. Soporta texto e imágenes (OCR).
     """
-    user_msg = request.message.strip()
-    if not user_msg:
-        raise HTTPException(status_code=400, detail="Mensaje vacío")
+    user_msg = message.strip()
+    if not user_msg and not image:
+        raise HTTPException(status_code=400, detail="Mensaje o imagen requerida")
 
     # Si viene de un gasto pendiente
     pending_ref = None
-    if request.pending_id:
+    if pending_id:
         pending_ref = db.query(PendingExpense).filter(
-            PendingExpense.id == request.pending_id,
+            PendingExpense.id == pending_id,
             PendingExpense.user_id == current_user.id
         ).first()
 
     # 1. Guardar mensaje del usuario y recuperar historial
     from app.models.models import ChatHistory
-    db.add(ChatHistory(user_id=current_user.id, role="user", message=user_msg))
+    msg_to_store = user_msg if user_msg else "[Imagen]"
+    db.add(ChatHistory(user_id=current_user.id, role="user", message=msg_to_store))
     db.commit()
 
     history_objs = db.query(ChatHistory).filter(ChatHistory.user_id == current_user.id).order_by(ChatHistory.id.desc()).limit(10).all()
@@ -122,17 +125,36 @@ def chat_with_agent(
     if pending_ref:
         pending_context = f"El usuario está categorizando un gasto detectado: {pending_ref.concept} por ${pending_ref.amount}."
     
-    result = process_finance_message(db, current_user.id, user_msg, extra_context=pending_context, history=chat_history)
+    # Manejo de imagen
+    img_bytes = None
+    if image:
+        img_bytes = await image.read()
+
+    result = process_finance_message(
+        db, current_user.id, user_msg, 
+        extra_context=pending_context, 
+        history=chat_history,
+        image_data=img_bytes
+    )
     
     if result["status"] == "error":
         return ChatResponse(message=result["message"])
     
     # 2. Procesar Acciones (Soporte para múltiples acciones)
-    data_items = result.get("data")
-    if data_items is None:
-         data_items = []
-    elif isinstance(data_items, dict):
-        data_items = [data_items]
+    ai_data = result.get("data")
+    if ai_data is None:
+         ai_data = {"intent": "TALK", "response_text": "No pude entender el mensaje."}
+    
+    # Extraer acciones si vienen en formato MULTI_ACTION
+    data_items = []
+    final_response_text = ai_data.get("response_text", "")
+
+    if ai_data.get("intent") == "MULTI_ACTION" and "actions" in ai_data:
+        data_items = ai_data["actions"]
+    elif isinstance(ai_data, list):
+        data_items = ai_data
+    else:
+        data_items = [ai_data]
     
     aggregated_responses = []
     final_action_taken = False
@@ -588,13 +610,15 @@ def chat_with_agent(
                     add_category_to_db(db, current_user.id, target_section, data.get("category", "General"), initial_amount)
                     try: background_tasks.add_task(add_category_to_sheet, target_section, data.get("category", "General"), initial_amount)
                     except: pass
+                else:
+                    target_section = exists.section
 
                 new_expense = Expense(
                     user_id=current_user.id,
                     amount=int(data.get("amount", 0)),
                     concept=data.get("concept", "Gasto"),
                     category=data.get("category", "General"),
-                    section=target_section if 'target_section' in locals() else data.get("section", "OTROS"),
+                    section=target_section,
                     payment_method=data.get("payment_method", "Efectivo"),
                     date=date.today()
                 )
@@ -610,7 +634,11 @@ def chat_with_agent(
                 print(f"Error en flow CREATE: {e}")
                 aggregated_responses.append("Error registrando gasto.")
 
-    final_msg_text = "\n".join(aggregated_responses) if aggregated_responses else "No entendí qué hacer."
+    # Si Lúcio ya nos dio un mensaje final, lo usamos. 
+    # Si no, unimos las respuestas individuales de las acciones.
+    final_msg_text = final_response_text if final_response_text else "\n".join(aggregated_responses)
+    if not final_msg_text: final_msg_text = "No entendí qué hacer."
+    
     from app.models.models import ChatHistory
     db.add(ChatHistory(user_id=current_user.id, role="assistant", message=final_msg_text))
     db.commit()

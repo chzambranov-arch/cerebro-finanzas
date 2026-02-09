@@ -311,7 +311,15 @@
                         <div class="time">Ahora</div>
                     </div>
                 </div>
+                <div id="chat-preview-area" class="chat-preview-area" style="display:none;">
+                    <img id="chat-preview-img" src="" style="max-height: 100px; border-radius: 8px;">
+                    <button id="btn-remove-preview" onclick="financeApp.removeChatPreview()">&times;</button>
+                </div>
                 <div class="chat-input-area">
+                    <button id="btn-chat-photo" onclick="document.getElementById('chat-photo-input').click()"
+                        title="Adjuntar boleta">📷</button>
+                    <input type="file" id="chat-photo-input" style="display:none" accept="image/*"
+                        capture="environment">
                     <input type="text" id="chat-input" placeholder="Escribe un gasto..." autocomplete="off">
                     <button id="btn-send-chat" onclick="financeApp.sendChatMessage()">➤</button>
                 </div>
@@ -504,11 +512,10 @@
             </button>
         </nav>
     </div>
-    <link rel="stylesheet" href="/static/chat.css?v=1.1">
+    <link rel="stylesheet" href="/static/chat.css?v=2.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/app.js?v=4.0.6"></script>
-    <script src="/static/chat.js?v=1.1"></script>
-    </script>
+    <script src="/static/app.js?v=4.0.7"></script>
+    <script src="/static/chat.js?v=2.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

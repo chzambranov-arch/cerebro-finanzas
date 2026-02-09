@@ -2,8 +2,6 @@
 (function () {
     console.log("Chat Module Loading...");
 
-    // 1. Resolve FinanceApp Class
-    // In global scope, 'class FinanceApp' might not be on 'window' property directly
     let targetClass = null;
     try {
         if (typeof FinanceApp !== 'undefined') {
@@ -22,7 +20,6 @@
 
     console.log("FinanceApp Class found. Extending prototype with Chat capabilities.");
 
-    // Extend prototype
     Object.assign(targetClass.prototype, {
 
         toggleChat: function () {
@@ -36,48 +33,73 @@
                 } else {
                     overlay.classList.add('active');
                     if (this.toggleBodyModal) this.toggleBodyModal(true);
-
-                    // Focus input
                     setTimeout(() => {
                         const input = document.getElementById('chat-input');
                         if (input) input.focus();
                     }, 300);
                 }
-            } else {
-                console.error("Chat overlay element #chat-overlay not found in DOM");
             }
         },
 
         sendChatMessage: async function () {
+            console.log("[DEBUG] sendChatMessage initiation");
             const input = document.getElementById('chat-input');
+            const photoInput = document.getElementById('chat-photo-input');
             const msgText = input.value.trim();
-            if (!msgText) return;
+            const photoFile = photoInput?.files[0];
 
-            // 1. Add User Message
-            this.addChatMessage(msgText, 'user');
+            if (!msgText && !photoFile) return;
+
+            // Clear inputs and preview immediately
             input.value = '';
+            this.removeChatPreview();
+
+            // 1. Add User Message (Handle image sequentially with Promise)
+            try {
+                if (photoFile) {
+                    console.log("[DEBUG] Image selected, reading...");
+                    const imageData = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = (e) => reject(e);
+                        reader.readAsDataURL(photoFile);
+                    });
+                    this.addChatMessage(`<img src="${imageData}" style="max-width:100%; border-radius:12px; margin-bottom:8px; display:block;">${msgText}`, 'user');
+                } else {
+                    this.addChatMessage(msgText, 'user');
+                }
+            } catch (err) {
+                console.error("Error loading image for preview:", err);
+                this.addChatMessage(msgText || "[Imagen error]", 'user');
+            }
 
             // 2. Add Thinking Message
-            const thinkingDiv = this.addChatMessage('Pensando...', 'bot', true);
+            const thinkingDiv = this.addChatMessage('Lúcio está analizando...', 'bot', true);
 
             try {
-                // Determine API Base
-                // If CONFIG is not available, try to infer or fallback
                 let apiBase = '/api/v1';
                 if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
                 else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
 
-                const payload = { message: msgText };
+                const formData = new FormData();
+                formData.append('message', msgText);
+                if (photoFile) {
+                    formData.append('image', photoFile, photoFile.name);
+                }
+
+                // Clear input file after adding to FormData
+                if (photoInput) photoInput.value = '';
+
                 if (this.activePendingId) {
-                    payload.pending_id = this.activePendingId;
-                    // Reset after sending to not reuse it accidentally
+                    formData.append('pending_id', this.activePendingId);
                     this.activePendingId = null;
                 }
 
+                console.log("[DEBUG] Sending request to:", `${apiBase}/agent/chat`);
                 const response = await fetch(`${apiBase}/agent/chat`, {
                     method: 'POST',
-                    headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    headers: { 'Authorization': `Bearer ${this.token || localStorage.getItem('auth_token')}` },
+                    body: formData
                 });
 
                 // Remove thinking
@@ -87,49 +109,28 @@
 
                 if (response.ok) {
                     const data = await response.json();
-                    console.log("[DEBUG] Agent Response:", data);
+                    console.log("[DEBUG] Agent Response Success:", data);
                     this.addChatMessage(data.message, 'bot');
 
-                    // If intent is not TALK, it means we likely changed data (CREATE/UPDATE/DELETE)
                     if (data.action_taken || (data.intent && data.intent !== 'TALK')) {
-                        console.log(`[DEBUG] Modification detected. Intent: ${data.intent}. Refreshing...`);
-
-                        const refresh = async () => {
-                            try {
-                                console.log("[DEBUG] Calling refreshData()...");
-                                if (window.financeApp && window.financeApp.refreshData) {
-                                    await window.financeApp.refreshData();
-                                } else if (this.refreshData) {
-                                    await this.refreshData();
-                                }
-                            } catch (e) {
-                                console.error("Error refreshing data:", e);
-                            }
-                        };
-
-                        // Triple refresh for stability (PWA/Local sync)
+                        console.log(`[DEBUG] Action detected. Refreshing...`);
+                        const refresh = () => this.refreshData && this.refreshData();
                         refresh();
-                        setTimeout(refresh, 500);
-                        setTimeout(refresh, 1500);
+                        setTimeout(refresh, 1000);
 
-                        // Receipt Card safety
                         if (data.expense_data) {
                             setTimeout(() => this.addReceiptCard(data.expense_data), 200);
                         }
                     }
                 } else {
                     const errTxt = await response.text();
-                    console.error("Agent Error:", errTxt);
-                    this.addChatMessage('Tuve un problema de conexión. Intenta de nuevo.', 'bot');
+                    console.error("[DEBUG] Server rejected request:", response.status, errTxt);
+                    this.addChatMessage('Lúcio tuvo un problema procesando eso. Intenta de nuevo por favor.', 'bot');
                 }
-
             } catch (e) {
-                console.error("Network Error:", e);
-                // Remove thinking if error
-                if (thinkingDiv && thinkingDiv.parentNode) {
-                    thinkingDiv.parentNode.removeChild(thinkingDiv);
-                }
-                this.addChatMessage('Error de red. Revisa tu conexión.', 'bot');
+                console.error("[DEBUG] Network Error:", e);
+                if (thinkingDiv && thinkingDiv.parentNode) thinkingDiv.parentNode.removeChild(thinkingDiv);
+                this.addChatMessage('Error de red. Asegúrate de tener conexión y que el servidor funcione.', 'bot');
             }
         },
 
@@ -144,6 +145,7 @@
             if (isThinking) {
                 content = '<span class="thinking-dots">...</span>';
             } else {
+                // Allow HTML for images but escape newlines for text
                 content = text.replace(/\n/g, '<br>');
             }
 
@@ -178,35 +180,54 @@
         },
 
         checkPendingGasto: async function () {
-            console.log("Checking for pending expenses from mail...");
             try {
                 let apiBase = '/api/v1';
                 if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
                 else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
 
                 const response = await fetch(`${apiBase}/agent/check-pending`, {
-                    headers: this.getHeaders()
+                    headers: { 'Authorization': `Bearer ${this.token || localStorage.getItem('auth_token')}` }
                 });
 
                 if (response.ok) {
                     const data = await response.json();
                     if (data.intent === 'ASK_CATEGORY') {
-                        // 1. Store the pending ID to send it later
                         this.activePendingId = data.pending_id;
-
-                        // 2. Open chat if closed
                         const overlay = document.getElementById('chat-overlay');
                         if (overlay && !overlay.classList.contains('active')) {
                             this.toggleChat();
                         }
-
-                        // 3. Lúcio speaks
                         this.addChatMessage(data.message, 'bot');
                     }
                 }
             } catch (e) {
                 console.error("Error in checkPendingGasto:", e);
             }
+        },
+
+        handleChatPhotoSelect: function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const previewArea = document.getElementById('chat-preview-area');
+                const previewImg = document.getElementById('chat-preview-img');
+                if (previewArea && previewImg) {
+                    previewImg.src = e.target.result;
+                    previewArea.style.display = 'flex';
+                }
+            };
+            reader.readAsDataURL(file);
+        },
+
+        removeChatPreview: function () {
+            const previewArea = document.getElementById('chat-preview-area');
+            const previewImg = document.getElementById('chat-preview-img');
+            const photoInput = document.getElementById('chat-photo-input');
+            if (previewArea) previewArea.style.display = 'none';
+            if (previewImg) previewImg.src = '';
+            if (photoInput) photoInput.value = '';
         }
     });
 
@@ -219,6 +240,15 @@
                     if (window.financeApp && window.financeApp.sendChatMessage) {
                         window.financeApp.sendChatMessage();
                     }
+                }
+            });
+        }
+
+        const chatPhotoInput = document.getElementById('chat-photo-input');
+        if (chatPhotoInput) {
+            chatPhotoInput.addEventListener('change', function (e) {
+                if (window.financeApp && window.financeApp.handleChatPhotoSelect) {
+                    window.financeApp.handleChatPhotoSelect(e);
                 }
             });
         }
