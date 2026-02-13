@@ -1,0 +1,223 @@
+{
+    "name": "Lúcio v2 - Árbol Corregido Final",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "lucio-brain-v2",
+                "options": {}
+            },
+            "id": "webhook-new",
+            "name": "Webhook In",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                0,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://host.docker.internal:8005/api/v2/lucio/context",
+                "authentication": "headerAuth",
+                "options": {}
+            },
+            "id": "context-new",
+            "name": "Obtener Contexto",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                200,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "model": "gpt-4o",
+                "options": {
+                    "systemMessage": "=Eres Lúcio, experto financiero. Tu tarea es analizar el mensaje del usuario basándote en el contexto:\n\nCategorías: {{ $json.categories }}\nÚltimos Gastos: {{ $json.recent_expenses }}\n\nDebes clasificar la intención en una de estas 4:\n1. CREATE_EXPENSE (Registrar un gasto)\n2. MANAGE_COMMITMENT (Deudas o préstamos)\n3. CREATE_FOLDER (Crear una carpeta o sección nueva)\n4. CHAT (Conversar)\n\nResponde ÚNICAMENTE en JSON:\n{\n  \"intent\": \"CATEGORIA\",\n  \"data\": { ... },\n  \"reply\": \"Respuesta al usuario\"\n}"
+                }
+            },
+            "id": "lucio-brain-new",
+            "name": "Lúcio Brain AI",
+            "type": "n8n-nodes-base.openAi",
+            "typeVersion": 1,
+            "position": [
+                450,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "values": [
+                        {
+                            "value": "={{ JSON.parse($json.message.content).intent }}",
+                            "output": 0
+                        },
+                        {
+                            "value": "={{ JSON.parse($json.message.content).intent }}",
+                            "output": 1
+                        },
+                        {
+                            "value": "={{ JSON.parse($json.message.content).intent }}",
+                            "output": 2
+                        },
+                        {
+                            "value": "={{ JSON.parse($json.message.content).intent }}",
+                            "output": 3
+                        }
+                    ]
+                },
+                "options": {
+                    "conditions": [
+                        {
+                            "value": "CREATE_EXPENSE"
+                        },
+                        {
+                            "value": "MANAGE_COMMITMENT"
+                        },
+                        {
+                            "value": "CREATE_FOLDER"
+                        },
+                        {
+                            "value": "CHAT"
+                        }
+                    ]
+                }
+            },
+            "id": "router-new",
+            "name": "Router de Intenciones",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 1,
+            "position": [
+                700,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://host.docker.internal:8005/api/v2/lucio/action/expense",
+                "authentication": "headerAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.parse($node[\"Lúcio Brain AI\"].json[\"message\"][\"content\"]).data }}",
+                "options": {}
+            },
+            "id": "exec-expense",
+            "name": "Ejecutar Gasto",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                950,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://host.docker.internal:8005/api/v2/lucio/action/category",
+                "authentication": "headerAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.parse($node[\"Lúcio Brain AI\"].json[\"message\"][\"content\"]).data }}",
+                "options": {}
+            },
+            "id": "exec-folder",
+            "name": "Ejecutar Carpeta",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                950,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://host.docker.internal:8005/api/v2/lucio/action/commitment",
+                "authentication": "headerAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.parse($node[\"Lúcio Brain AI\"].json[\"message\"][\"content\"]).data }}",
+                "options": {}
+            },
+            "id": "exec-comm",
+            "name": "Ejecutar Deuda",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                950,
+                600
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook In": {
+            "main": [
+                [
+                    {
+                        "node": "Obtener Contexto",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Obtener Contexto": {
+            "main": [
+                [
+                    {
+                        "node": "Lúcio Brain AI",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Lúcio Brain AI": {
+            "main": [
+                [
+                    {
+                        "node": "Router de Intenciones",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Router de Intenciones": {
+            "main": [
+                [
+                    {
+                        "node": "Ejecutar Gasto",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Ejecutar Deuda",
+                        "type": "main",
+                        "index": 1
+                    }
+                ],
+                [
+                    {
+                        "node": "Ejecutar Carpeta",
+                        "type": "main",
+                        "index": 2
+                    }
+                ],
+                [
+                    {
+                        "node": "Ejecutar Deuda",
+                        "type": "main",
+                        "index": 3
+                    }
+                ]
+            ]
+        }
+    }
+}

@@ -95,8 +95,8 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
     # 5. Calcular gastos por categoría
     expenses_by_category = {}
     for exp in expenses:
-        section = exp.section or "OTROS"
-        category = exp.category
+        section = (exp.section or "OTROS").strip().upper()
+        category = (exp.category or "Sin clasificar").strip()
         
         if section not in expenses_by_category:
             expenses_by_category[section] = {}
@@ -106,24 +106,26 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
         
         expenses_by_category[section][category] += exp.amount
     
-    # 6. Construir estructura compatible con frontend (DICCIONARIO, no lista)
+    # 6. Construir estructura compatible con frontend
     categories_output = {}
     
+    # Procesar primero las secciones que tienen categorías registradas
     for section, cats in categories_dict.items():
         section_budget = 0
         section_spent = 0
         section_subcats = {}
         
+        # Obtener todos los gastos de esta sección para no perder los "Sin clasificar"
+        all_section_spent_data = expenses_by_category.get(section, {})
+        
+        # A. Procesar categorías con presupuesto
         for cat_info in cats:
             cat_name = cat_info["name"]
-            
-            # FILTRO: Ocultar placeholders internos
             if cat_name == "_TEMP_PLACEHOLDER_": continue
             
             cat_budget = cat_info["budget"]
-            
-            # Gastos de esta subcategoría
-            cat_spent = expenses_by_category.get(section, {}).get(cat_name, 0)
+            # Sacar el gasto de esta categoría y quitarlo de la lista temporal
+            cat_spent = all_section_spent_data.pop(cat_name, 0)
             
             section_budget += cat_budget
             section_spent += cat_spent
@@ -132,6 +134,17 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
                 "budget": cat_budget,
                 "spent": cat_spent
             }
+        
+        # B. Si quedaron gastos en esta sección sin categoría asignada (ej: "Sin clasificar")
+        for extra_cat, extra_spent in all_section_spent_data.items():
+            section_spent += extra_spent
+            if extra_cat in section_subcats:
+                section_subcats[extra_cat]["spent"] += extra_spent
+            else:
+                section_subcats[extra_cat] = {
+                    "budget": 0,
+                    "spent": extra_spent
+                }
             
         categories_output[section] = {
             "budget": section_budget,
@@ -139,11 +152,22 @@ def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
             "categories": section_subcats
         }
     
+    # 7. Procesar secciones que no tienen categorías registradas pero sí gastos
+    for section, extra_cats in expenses_by_category.items():
+        if section not in categories_output:
+            section_spent = sum(extra_cats.values())
+            subcats = {name: {"budget": 0, "spent": spent} for name, spent in extra_cats.items()}
+            categories_output[section] = {
+                "budget": 0,
+                "spent": section_spent,
+                "categories": subcats
+            }
+    
     return {
         "monthly_budget": monthly_budget,
         "total_spent": total_spent,
-        "available_balance": available_balance, # Key correcta
-        "categories": categories_output # Key correcta (Dict, no List)
+        "available_balance": available_balance,
+        "categories": categories_output
     }
 
 
