@@ -1,322 +1,220 @@
-"""
-Servicio de base de datos para reemplazar Google Sheets
-"""
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, date
 from typing import Optional, Dict, List
-from app.models.finance import Expense
-from app.models.budget import Budget, Category, AppConfig
+from app.models.finance import Folder, Item, Expense, ExpenseType, ChatHistory
+from app.models.user import User
+from app.schemas import FolderSummary, DashboardData
 
+# --- FOLDER SERVICES ---
 
-def get_or_create_monthly_budget(db: Session, user_id: int, month: Optional[str] = None) -> int:
-    """Obtiene o crea el presupuesto mensual del usuario"""
-    if not month:
-        month = datetime.now().strftime("%Y-%m")
-    
-    budget = db.query(Budget).filter(
-        Budget.user_id == user_id,
-        Budget.month == month
-    ).first()
-    
-    if not budget:
-        # Crear presupuesto inicial de $0
-        budget = Budget(user_id=user_id, month=month, amount=0)
-        db.add(budget)
-        db.commit()
-        db.refresh(budget)
-    
-    return budget.amount
+def get_folders(db: Session, user_id: int):
+    return db.query(Folder).filter(Folder.user_id == user_id).all()
 
-
-def update_monthly_budget(db: Session, user_id: int, new_amount: int, month: Optional[str] = None) -> bool:
-    """Actualiza el presupuesto mensual"""
-    if not month:
-        month = datetime.now().strftime("%Y-%m")
+def create_folder(db: Session, user_id: int, name: str, initial_balance: int):
+    # Search for existing
+    existing = db.query(Folder).filter(Folder.user_id == user_id, Folder.name == name).first()
+    if existing:
+        return existing
     
-    budget = db.query(Budget).filter(
-        Budget.user_id == user_id,
-        Budget.month == month
-    ).first()
-    
-    if budget:
-        budget.amount = new_amount
-    else:
-        budget = Budget(user_id=user_id, month=month, amount=new_amount)
-        db.add(budget)
-    
+    new_folder = Folder(user_id=user_id, name=name, initial_balance=initial_balance)
+    db.add(new_folder)
     db.commit()
-    return True
+    db.refresh(new_folder)
+    return new_folder
 
+def update_folder(db: Session, folder_id: int, name: Optional[str] = None, initial_balance: Optional[int] = None):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        return None
+    if name:
+        folder.name = name
+    if initial_balance is not None:
+        folder.initial_balance = initial_balance
+    db.commit()
+    db.refresh(folder)
+    return folder
 
-def get_categories_with_budget(db: Session, user_id: int) -> Dict[str, List[Dict]]:
-    """Obtiene todas las categorías organizadas por sección con sus presupuestos"""
-    categories = db.query(Category).filter(Category.user_id == user_id).all()
-    
-    result = {}
-    for cat in categories:
-        sec_name = cat.section.strip().upper()
-        if sec_name not in result:
-            result[sec_name] = []
-        result[sec_name].append({
-            "name": cat.name.strip(),
-            "budget": cat.budget
-        })
-    
-    return result
+# --- ITEM SERVICES ---
 
+def create_item(db: Session, folder_id: int, name: str, budget: int, type: ExpenseType):
+    new_item = Item(folder_id=folder_id, name=name, budget=budget, type=type)
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return new_item
 
-def get_dashboard_data_from_db(db: Session, user_id: int) -> Dict:
-    """
-    Genera los datos del dashboard desde la base de datos
-    DEBE coincidir con la estructura esperada por app.js:
-    - categories: Dict[section_name, {budget, spent, categories: Dict[subcat, {budget, spent}]}]
-    - available_balance: int
-    - monthly_budget: int
-    """
-    current_month = datetime.now().strftime("%Y-%m")
-    
-    # 1. Presupuesto mensual
-    monthly_budget = get_or_create_monthly_budget(db, user_id, current_month)
-    
-    # 2. Gastos del mes actual
-    first_day = datetime.now().replace(day=1).date()
-    expenses = db.query(Expense).filter(
-        Expense.user_id == user_id,
-        Expense.date >= first_day
-    ).all()
-    
-    # 3. Calcular total gastado
-    total_spent = sum(exp.amount for exp in expenses)
-    available_balance = monthly_budget - total_spent
-    
-    # 4. Obtener categorías con presupuesto
-    categories_dict = get_categories_with_budget(db, user_id)
-    
-    # 5. Calcular gastos por categoría
-    expenses_by_category = {}
-    for exp in expenses:
-        section = (exp.section or "OTROS").strip().upper()
-        category = (exp.category or "Sin clasificar").strip()
+# --- EXPENSE SERVICES ---
+
+def create_expense(db: Session, user_id: int, description: str, amount: int, folder_id: int, 
+                   type: ExpenseType, item_id: Optional[int] = None, date_obj: Optional[date] = None):
+    if not date_obj:
+        date_obj = date.today()
         
-        if section not in expenses_by_category:
-            expenses_by_category[section] = {}
-        
-        if category not in expenses_by_category[section]:
-            expenses_by_category[section][category] = 0
-        
-        expenses_by_category[section][category] += exp.amount
+    new_expense = Expense(
+        user_id=user_id,
+        description=description,
+        amount=amount,
+        folder_id=folder_id,
+        item_id=item_id,
+        type=type,
+        date=date_obj
+    )
+    db.add(new_expense)
+    db.commit()
+    db.refresh(new_expense)
+    return new_expense
+
+# --- DASHBOARD & LOGIC ---
+
+def get_dashboard_summary(db: Session, user_id: int):
+    folders = db.query(Folder).filter(Folder.user_id == user_id).all()
     
-    # 6. Construir estructura compatible con frontend
-    categories_output = {}
+    total_budget = 0
+    total_spent = 0
+    folder_summaries = []
     
-    # Procesar primero las secciones que tienen categorías registradas
-    for section, cats in categories_dict.items():
-        section_budget = 0
-        section_spent = 0
-        section_subcats = {}
+    current_month_first_day = date.today().replace(day=1)
+    
+    for folder in folders:
+        total_budget += folder.initial_balance
         
-        # Obtener todos los gastos de esta sección para no perder los "Sin clasificar"
-        all_section_spent_data = expenses_by_category.get(section, {})
+        # Spent in this folder this month
+        spent_in_folder = db.query(func.sum(Expense.amount)).filter(
+            Expense.folder_id == folder.id,
+            Expense.date >= current_month_first_day
+        ).scalar() or 0
         
-        # A. Procesar categorías con presupuesto
-        for cat_info in cats:
-            cat_name = cat_info["name"]
-            if cat_name == "_TEMP_PLACEHOLDER_": continue
-            
-            cat_budget = cat_info["budget"]
-            # Sacar el gasto de esta categoría y quitarlo de la lista temporal
-            cat_spent = all_section_spent_data.pop(cat_name, 0)
-            
-            section_budget += cat_budget
-            section_spent += cat_spent
-            
-            section_subcats[cat_name] = {
-                "budget": cat_budget,
-                "spent": cat_spent
-            }
+        total_spent += spent_in_folder
         
-        # B. Si quedaron gastos en esta sección sin categoría asignada (ej: "Sin clasificar")
-        for extra_cat, extra_spent in all_section_spent_data.items():
-            section_spent += extra_spent
-            if extra_cat in section_subcats:
-                section_subcats[extra_cat]["spent"] += extra_spent
-            else:
-                section_subcats[extra_cat] = {
-                    "budget": 0,
-                    "spent": extra_spent
-                }
-            
-        categories_output[section] = {
-            "budget": section_budget,
-            "spent": section_spent,
-            "categories": section_subcats
+        # Detailed items for this folder (optional if needed by UI)
+        # But for the summary we just need spent/remaining
+        summary = {
+            "id": folder.id,
+            "name": folder.name,
+            "initial_balance": folder.initial_balance,
+            "spent": spent_in_folder,
+            "remaining": folder.initial_balance - spent_in_folder
         }
-    
-    # 7. Procesar secciones que no tienen categorías registradas pero sí gastos
-    for section, extra_cats in expenses_by_category.items():
-        if section not in categories_output:
-            section_spent = sum(extra_cats.values())
-            subcats = {name: {"budget": 0, "spent": spent} for name, spent in extra_cats.items()}
-            categories_output[section] = {
-                "budget": 0,
-                "spent": section_spent,
-                "categories": subcats
-            }
+        folder_summaries.append(summary)
+        
+    user = db.query(User).filter(User.id == user_id).first()
+    user_name = user.tecnico_nombre if user else "Usuario"
     
     return {
-        "monthly_budget": monthly_budget,
+        "user_name": user_name,
+        "total_budget": total_budget,
         "total_spent": total_spent,
-        "available_balance": available_balance,
-        "categories": categories_output
+        "total_remaining": total_budget - total_spent,
+        "folders": folder_summaries
     }
 
-
-def add_category_to_db(db: Session, user_id: int, section: str, category: str, budget: int = 0) -> bool:
-    """Agrega una nueva categoría a la base de datos"""
-    section = section.strip().upper()
-    category = category.strip()
+def get_folder_details(db: Session, folder_id: int):
+    """Obtiene detalles de una carpeta, incluyendo ítems y su consumo"""
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        return None
+        
+    current_month_first_day = date.today().replace(day=1)
     
-    existing = db.query(Category).filter(
-        Category.user_id == user_id,
-        Category.section == section,
-        Category.name == category
-    ).first()
+    # Items categorized or sporadic
+    items_data = []
+    items = db.query(Item).filter(Item.folder_id == folder_id).all()
     
-    if existing:
-        return False  # Ya existe
-    
-    new_cat = Category(
-        user_id=user_id,
-        section=section,
-        name=category,
-        budget=budget
+    for item in items:
+        spent_on_item = db.query(func.sum(Expense.amount)).filter(
+            Expense.item_id == item.id,
+            Expense.date >= current_month_first_day
+        ).scalar() or 0
+        
+        items_data.append({
+            "id": item.id,
+            "name": item.name,
+            "budget": item.budget,
+            "spent": spent_on_item,
+            "remaining": item.budget - spent_on_item,
+            "type": item.type,
+            "is_paid": (item.type == ExpenseType.FIJO and spent_on_item > 0)
+        })
+        
+    # Sporadic expenses in this folder
+    sporadic_expenses_query = db.query(Expense).filter(
+        Expense.folder_id == folder_id,
+        Expense.item_id == None,
+        Expense.date >= current_month_first_day
     )
-    db.add(new_cat)
-    db.commit()
-    return True
+    
+    sporadic_spent = db.query(func.sum(Expense.amount)).filter(
+        Expense.folder_id == folder_id,
+        Expense.item_id == None,
+        Expense.date >= current_month_first_day
+    ).scalar() or 0
+    
+    sporadic_items = []
+    for exp in sporadic_expenses_query.all():
+         sporadic_items.append({
+             "id": exp.id,
+             "description": exp.description,
+             "amount": exp.amount,
+             "date": exp.date
+         })
+    
+    return {
+        "id": folder.id,
+        "name": folder.name,
+        "initial_balance": folder.initial_balance,
+        "items": items_data,
+        "sporadic_spent": sporadic_spent,
+        "sporadic_items": sporadic_items
+    }
 
-
-def update_category_in_db(db: Session, user_id: int, section: str, 
-                          category: Optional[str] = None, 
-                          new_name: Optional[str] = None, 
-                          new_budget: Optional[int] = None,
-                          new_section: Optional[str] = None,
-                          target_type: str = "CATEGORY") -> bool:
-    section = section.strip().upper()
-    if category: category = category.strip()
-    if new_name: new_name = new_name.strip()
-    if new_section: new_section = new_section.strip().upper()
-
-    # 1. RENOMBRAR SECCIÓN COMPLETA
-    if target_type == "SECTION":
-        if not new_name: return False
-        
-        # Buscar todas las categorías de esta sección
-        cats = db.query(Category).filter(
-            Category.user_id == user_id,
-            Category.section == section
-        ).all()
-        
-        if not cats: return False
-        
-        # Actualizar nombre de sección en Categorías
-        for c in cats:
-            c.section = new_name
-            
-        # Actualizar histórico de Gastos
-        db.query(Expense).filter(
-            Expense.user_id == user_id,
-            Expense.section == section
-        ).update({"section": new_name})
-        
+def delete_folder(db: Session, folder_id: int):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if folder:
+        # Cascade delete is handled by SQLAlchemy if configured, but let's be explicit if needed
+        # Actually our models.finance should have cascade
+        db.delete(folder)
         db.commit()
         return True
-
-    # 2. ACTUALIZAR SUBCATEGORÍA (Nombre, Presupuesto o Mover de Carpeta)
-    else:
-        if not category: return False
-        
-        # Buscar objeto original
-        cat_obj = db.query(Category).filter(
-            Category.user_id == user_id,
-            Category.section.ilike(section),
-            Category.name.ilike(category)
-        ).first()
-        
-        if not cat_obj: return False
-        
-        # Guardar valores originales exactos para buscar en transacciones
-        original_section = cat_obj.section
-        original_name = cat_obj.name
-        
-        # A. Renombrar
-        if new_name:
-            cat_obj.name = new_name
-            # Actualizar gastos históricos
-            db.query(Expense).filter(
-                Expense.user_id == user_id,
-                Expense.section == original_section,
-                Expense.category == original_name
-            ).update({"category": new_name})
-            # Actualizamos original_name para las siguientes operaciones
-            original_name = new_name
-            
-        # B. Cambiar Presupuesto
-        if new_budget is not None:
-            cat_obj.budget = new_budget
-            
-        # C. Mover a otra Carpeta (Sección)
-        if new_section:
-            cat_obj.section = new_section
-            # Actualizar gastos históricos
-            db.query(Expense).filter(
-                Expense.user_id == user_id,
-                Expense.section == original_section,
-                Expense.category == original_name
-            ).update({"section": new_section})
-
-        db.commit()
-        return True
-
-
-def delete_category_from_db(db: Session, user_id: int, section: str, category: str) -> bool:
-    """Elimina una categoría de la base de datos"""
-    # Verificar que no tenga gastos asociados
-    has_expenses = db.query(Expense).filter(
-        Expense.user_id == user_id,
-        Expense.section.ilike(section),
-        Expense.category.ilike(category)
-    ).first()
-    
-    if has_expenses:
-        return False
-    
-    cat = db.query(Category).filter(
-        Category.user_id == user_id,
-        Category.section.ilike(section),
-        Category.name.ilike(category)
-    ).first()
-    
-    if cat:
-        db.delete(cat)
-        db.commit()
-        return True
-    
     return False
 
+def delete_item(db: Session, item_id: int):
+    item = db.query(Item).filter(Item.id == item_id).first()
+    if item:
+        # Manually cascade delete expenses for this item
+        db.query(Expense).filter(Expense.item_id == item_id).delete(synchronize_session=False)
+        db.delete(item)
+        db.commit()
+        return True
+    return False
 
-def initialize_default_categories(db: Session, user_id: int):
-    """Inicializa categorías por defecto para un nuevo usuario"""
-    default_categories = [
-        ("CASA", "Arriendo", 0),
-        ("CASA", "Servicios", 0),
-        ("CASA", "Supermercado", 0),
-        ("FAMILIA", "Salud", 0),
-        ("FAMILIA", "Educación", 0),
-        ("TRANSPORTE", "Bencina", 0),
-        ("TRANSPORTE", "Uber", 0),
-        ("OTROS", "General", 0),
-    ]
-    
-    for section, category, budget in default_categories:
-        add_category_to_db(db, user_id, section, category, budget)
+def delete_sporadic_expenses(db: Session, folder_id: int):
+    try:
+        db.query(Expense).filter(
+            Expense.folder_id == folder_id,
+            Expense.item_id == None
+        ).delete(synchronize_session=False)
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleing sporadic: {e}")
+        db.rollback()
+        return False
+
+def delete_expense(db: Session, expense_id: int):
+    expense = db.query(Expense).filter(Expense.id == expense_id).first()
+    if expense:
+        db.delete(expense)
+        db.commit()
+        return True
+    return False
+
+# --- CHAT MEMORY ---
+
+def add_chat_msg(db: Session, user_id: int, role: str, message: str):
+    msg = ChatHistory(user_id=user_id, role=role, message=message)
+    db.add(msg)
+    db.commit()
+
+def get_chat_history(db: Session, user_id: int, limit: int = 5):
+    return db.query(ChatHistory).filter(ChatHistory.user_id == user_id).order_by(ChatHistory.timestamp.desc()).limit(limit).all()

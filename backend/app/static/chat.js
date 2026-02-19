@@ -74,7 +74,7 @@
                     this.activePendingId = null;
                 }
 
-                const response = await fetch(`${apiBase}/agent/chat`, {
+                const response = await fetch('/api/v3/lucio/chat', {
                     method: 'POST',
                     headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -87,8 +87,11 @@
 
                 if (response.ok) {
                     const data = await response.json();
-                    console.log("[DEBUG] Agent Response:", data);
-                    this.addChatMessage(data.message, 'bot');
+                    console.log("[DEBUG] Lúcio (n8n) Response:", data);
+
+                    // Support both v1 (message) and v2/n8n (reply) response formats
+                    const botReply = data.reply || data.message || data.output || "No pude generar una respuesta.";
+                    this.addChatMessage(botReply, 'bot');
 
                     // If intent is not TALK, it means we likely changed data (CREATE/UPDATE/DELETE)
                     if (data.action_taken || (data.intent && data.intent !== 'TALK')) {
@@ -144,7 +147,9 @@
             if (isThinking) {
                 content = '<span class="thinking-dots">...</span>';
             } else {
-                content = text.replace(/\n/g, '<br>');
+                // Asegurar que sea string para evitar errores de .replace
+                const safeText = (typeof text === 'string') ? text : JSON.stringify(text);
+                content = safeText.replace(/\n/g, '<br>');
             }
 
             msgDiv.innerHTML = `
@@ -177,37 +182,7 @@
             container.scrollTop = container.scrollHeight;
         },
 
-        checkPendingGasto: async function () {
-            console.log("Checking for pending expenses from mail...");
-            try {
-                let apiBase = '/api/v1';
-                if (typeof CONFIG !== 'undefined') apiBase = CONFIG.API_BASE;
-                else if (window.CONFIG) apiBase = window.CONFIG.API_BASE;
 
-                const response = await fetch(`${apiBase}/agent/check-pending`, {
-                    headers: this.getHeaders()
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.intent === 'ASK_CATEGORY') {
-                        // 1. Store the pending ID to send it later
-                        this.activePendingId = data.pending_id;
-
-                        // 2. Open chat if closed
-                        const overlay = document.getElementById('chat-overlay');
-                        if (overlay && !overlay.classList.contains('active')) {
-                            this.toggleChat();
-                        }
-
-                        // 3. Lúcio speaks
-                        this.addChatMessage(data.message, 'bot');
-                    }
-                }
-            } catch (e) {
-                console.error("Error in checkPendingGasto:", e);
-            }
-        }
     });
 
     // Handle Enter Key

@@ -1,7 +1,7 @@
 const CONFIG = {
     // Force absolute path if running from file system (double click index.html)
     API_BASE: window.location.protocol === 'file:'
-        ? 'http://localhost:8004/api/v1'
+        ? 'http://localhost:8005/api/v1'
         : '/api/v1',
     POLL_INTERVAL: 30000,
     VAPID_PUBLIC_KEY: 'BO8yC-brgiP_8TYicNkmpYlQ9a8qGtDLFAtZlA8_DH17MxyXCVFFdu2qQhjvHHQvmesm-DDXY49DcUOh5ekIa6c'
@@ -13,12 +13,13 @@ if (window.location.protocol === 'file:') {
             <h1 style="color: #ef4444; font-size: 2rem;">⚠️ MODO DE ACCESO INCORRECTO</h1>
             <p style="font-size: 1.2rem; margin-bottom: 20px;">Estás abriendo el archivo localmente. Esto bloquea la conexión por seguridad.</p>
             <p>Por favor, haz clic aquí para entrar correctamente:</p>
-            <a href="http://localhost:8004" style="font-size: 2.5rem; color: #3b82f6; font-weight: bold; text-decoration: underline;">ENTRAR AL SISTEMA</a>
+            <a href="http://localhost:8005" style="font-size: 2.5rem; color: #3b82f6; font-weight: bold; text-decoration: underline;">ENTRAR AL SISTEMA</a>
         </div>
     `;
     // Stop execution
     throw new Error("Local file access constrained");
 }
+console.log('🚀 Finanzas Core v3.0.46 Loading...');
 const CURRENT_VERSION = 'v3.0.46-debug';
 console.log('App Config:', CONFIG);
 
@@ -442,7 +443,8 @@ class FinanceApp {
     }
 
     setupEventListeners() {
-        const form = document.getElementById('expense-form');
+        const expenseForm = document.getElementById('expense-form');
+        const loginForm = document.getElementById('login-form');
         const sectionSelect = document.getElementById('section-select');
         const commForm = document.getElementById('commitment-form');
         const budgetBtn = document.getElementById('btn-save-budget');
@@ -451,10 +453,17 @@ class FinanceApp {
             sectionSelect.addEventListener('change', () => this.updateSubcategories());
         }
 
-        if (form) {
-            form.addEventListener('submit', async (e) => {
+        if (expenseForm) {
+            expenseForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 await this.handleExpenseSubmit();
+            });
+        }
+
+        if (loginForm) {
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                await this.handleLogin();
             });
         }
 
@@ -476,14 +485,16 @@ class FinanceApp {
     }
 
     setupAuth() {
-        // Redundant with inline onclick="financeApp.handleLogin()" in index.html v3.0.39
-        // Kept empty structure for compatibility if needed later.
+        // Handled in setupEventListeners for reliability
+        console.log('[AUTH] System ready');
     }
 
     showLogin() {
         const overlay = document.getElementById('login-overlay');
         if (overlay) {
             overlay.classList.add('active');
+            overlay.style.pointerEvents = 'auto';
+            overlay.style.display = 'flex';
             this.toggleBodyModal(true);
         }
     }
@@ -565,15 +576,14 @@ class FinanceApp {
 
     renderDashboard(data) {
         console.log('[DEBUG] Rendering Dashboard');
-        const user = data.user_name || "Usuario";
+        const user = data.user_name || "Christian ZV";
         const greeting = document.getElementById('greeting-text');
         if (greeting) greeting.textContent = `Hola, ${user} 👋`;
 
         const balance = document.getElementById('available-balance');
-        // Safety check for nulls (ensure number)
-        const availableBal = data.available_balance ?? 0;
-        const monthlyBud = data.monthly_budget ?? 0;
-        console.log('[DEBUG] Bal:', availableBal, 'Bud:', monthlyBud);
+        // Map backend 'total_remaining' to 'available_balance'
+        const availableBal = data.total_remaining ?? 0;
+        const monthlyBud = data.total_budget ?? 0;
 
         if (balance) balance.textContent = `$${availableBal.toLocaleString()}`;
 
@@ -584,23 +594,26 @@ class FinanceApp {
         if (syncTime) syncTime.textContent = new Date().toLocaleTimeString();
 
         const container = document.getElementById('categories-container');
-        if (!container) {
-            console.error('[ERRO] Categories Container NOT FOUND');
-            return;
-        }
+        if (!container) return;
         container.innerHTML = '';
 
-        this.sectionsData = data.categories || {};
-        console.log('[DEBUG] Sections:', this.sectionsData);
-        this.updateModalCategories();
+        // Store folders in sectionsData for detail view
+        this.sectionsData = {};
+        (data.folders || []).forEach(f => {
+            this.sectionsData[f.name] = {
+                id: f.id,
+                budget: f.initial_balance,
+                spent: f.spent,
+                remaining: f.remaining,
+                name: f.name
+            };
+        });
 
         Object.entries(this.sectionsData).forEach(([name, sec]) => {
-            // Robust data access
             const budgetVal = sec.budget ?? 0;
             const spentVal = sec.spent ?? 0;
-
             const percent = budgetVal > 0 ? (spentVal / budgetVal) * 100 : 0;
-            const remaining = budgetVal - spentVal;
+            const remaining = sec.remaining;
             const isOver = remaining < 0;
             const barColor = percent >= 90 ? 'red' : (percent >= 70 ? 'orange' : 'green');
             const icon = this.getIconForSection(name);
@@ -632,39 +645,53 @@ class FinanceApp {
         addCard.style.cssText = 'border: 2px dashed #cbd5e1; justify-content: center; align-items: center; cursor: pointer; background: rgba(255,255,255,0.5);';
         addCard.innerHTML = `
             <div style="font-size: 2rem; color: #94a3b8;">+</div>
-            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 500;">Nueva Sección</div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 500;">Nueva Carpeta</div>
         `;
         addCard.addEventListener('click', () => this.handleAddSection());
         container.appendChild(addCard);
     }
 
-    updateModalCategories() {
+    async updateModalCategories() {
         const sectionSelect = document.getElementById('section-select');
         if (!sectionSelect) return;
-        const currentSec = sectionSelect.value;
-        sectionSelect.innerHTML = '<option value="">Selecciona Sección...</option>';
-        Object.keys(this.sectionsData).forEach(sec => {
-            const opt = document.createElement('option');
-            opt.value = sec;
-            opt.textContent = sec;
-            sectionSelect.appendChild(opt);
-        });
-        if (currentSec) sectionSelect.value = currentSec;
-        this.updateSubcategories();
+        const currentSecId = sectionSelect.value;
+
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/folders`, { headers: this.getHeaders() });
+            if (response.ok) {
+                const folders = await response.json();
+                this.foldersList = folders; // Cache list of folders with items
+
+                sectionSelect.innerHTML = '<option value="">Selecciona Carpeta...</option>';
+                folders.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.id;
+                    opt.textContent = f.name;
+                    sectionSelect.appendChild(opt);
+                });
+                if (currentSecId) sectionSelect.value = currentSecId;
+            }
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     updateSubcategories() {
         const sectionSelect = document.getElementById('section-select');
         const categorySelect = document.getElementById('category');
-        const selectedSec = sectionSelect.value;
-        categorySelect.innerHTML = '<option value="">Selecciona Categoría...</option>';
-        if (selectedSec && this.sectionsData[selectedSec]) {
-            Object.keys(this.sectionsData[selectedSec].categories).forEach(cat => {
-                const opt = document.createElement('option');
-                opt.value = cat;
-                opt.textContent = cat;
-                categorySelect.appendChild(opt);
-            });
+        const selectedFolderId = parseInt(sectionSelect.value);
+
+        categorySelect.innerHTML = '<option value="">Esporádico / Libre...</option>';
+        if (selectedFolderId && this.foldersList) {
+            const folder = this.foldersList.find(f => f.id === selectedFolderId);
+            if (folder && folder.items) {
+                folder.items.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.id;
+                    opt.textContent = `${item.name} (${item.type})`;
+                    categorySelect.appendChild(opt);
+                });
+            }
         }
     }
 
@@ -687,95 +714,149 @@ class FinanceApp {
         return '📦';
     }
 
-    showCategoryDetail(sectionName) {
-        const sec = this.sectionsData[sectionName];
-        if (!sec) return;
+    async showCategoryDetail(sectionName) {
+        const cachedSec = this.sectionsData[sectionName];
+        if (!cachedSec) return;
 
-        const modal = document.getElementById('modal-detail');
-        const title = document.getElementById('detail-title');
-        const spentVal = document.getElementById('detail-spent');
-        const budgetVal = document.getElementById('detail-budget');
-        const progressBar = document.getElementById('detail-progress-bar');
-        const subList = document.getElementById('detail-subcategories');
-        const iconContainer = document.getElementById('detail-icon');
+        // Fetch fresh folder details from backend
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/folders/${cachedSec.id}`, {
+                headers: this.getHeaders()
+            });
+            if (!response.ok) throw new Error("Could not fetch details");
+            const sec = await response.json();
 
-        const percent = sec.budget > 0 ? (sec.spent / sec.budget) * 100 : 0;
+            const modal = document.getElementById('modal-detail');
+            const title = document.getElementById('detail-title');
+            const spentVal = document.getElementById('detail-spent');
+            const budgetVal = document.getElementById('detail-budget');
+            const progressBar = document.getElementById('detail-progress-bar');
+            const subList = document.getElementById('detail-subcategories');
+            const iconContainer = document.getElementById('detail-icon');
 
-        title.textContent = sectionName;
-        iconContainer.textContent = this.getIconForSection(sectionName);
-        spentVal.innerHTML = `$${sec.spent.toLocaleString()} ${percent <= 100 ? `(${percent.toFixed(1)}%)` : ''} ${sec.spent > sec.budget ? '<span class="over-alert small">🚨</span>' : ''}`;
-        budgetVal.textContent = `$${sec.budget.toLocaleString()}`;
+            // sec is now Folder schema with initial_balance, spent, items
+            const totalSpent = sec.items.reduce((acc, i) => acc + i.spent, 0) + (sec.sporadic_spent || 0);
+            const totalBudget = sec.initial_balance;
+            const percent = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
 
-        progressBar.style.width = `${Math.min(percent, 100)}%`;
-        progressBar.className = `progress-bar ${percent >= 90 ? 'red' : (percent >= 70 ? 'orange' : 'green')}`;
+            title.textContent = sec.name;
+            iconContainer.textContent = this.getIconForSection(sec.name);
+            spentVal.innerHTML = `$${totalSpent.toLocaleString()} ${percent <= 100 ? `(${percent.toFixed(1)}%)` : ''} ${totalSpent > totalBudget ? '<span class="over-alert small">🚨</span>' : ''}`;
+            budgetVal.textContent = `$${totalBudget.toLocaleString()}`;
 
-        subList.innerHTML = '';
-        Object.entries(sec.categories).forEach(([catName, catData]) => {
-            const item = document.createElement('div');
-            item.className = 'subcat-item';
-            const catPercent = catData.budget > 0 ? (catData.spent / catData.budget) * 100 : 0;
-            const remaining = catData.budget - catData.spent;
-            const isOver = remaining < 0;
-            const barColor = catPercent >= 90 ? 'red' : (catPercent >= 70 ? 'orange' : 'green');
+            if (progressBar) {
+                progressBar.style.width = `${Math.min(percent, 100)}%`;
+                progressBar.className = `progress-bar ${percent >= 90 ? 'red' : (percent >= 70 ? 'orange' : 'green')}`;
+            }
 
-            item.innerHTML = `
-                <div class="subcat-header-row">
-                    <h4 style="font-size: 1rem;">${catName}</h4>
-                    <div class="subcat-actions" style="display: flex; gap: 10px;">
-                        <button class="btn-edit-cat" data-sec="${sectionName}" data-cat="${catName}" 
-                            style="background:#f1f5f9; border:1px solid #cbd5e1; padding: 8px 12px; border-radius: 8px; color:var(--primary); cursor:pointer; font-size:0.8rem; font-weight: 700; display: flex; align-items:center; gap:5px;">
-                            ✏️ EDITAR
-                        </button>
-                        <button class="btn-delete-cat" data-sec="${sectionName}" data-cat="${catName}" 
-                            style="background:#fee2e2; border:1px solid #fecaca; padding: 8px 12px; border-radius: 8px; color:#ef4444; cursor:pointer; font-size:0.8rem;">
-                            🗑️
-                        </button>
+            subList.innerHTML = '';
+
+            // Render Items (Fijos/Balance)
+            sec.items.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'subcat-item';
+                const itemPercent = item.budget > 0 ? (item.spent / item.budget) * 100 : 0;
+                const remaining = item.budget - item.spent;
+                const isOver = remaining < 0;
+                const barColor = itemPercent >= 90 ? 'red' : (itemPercent >= 70 ? 'orange' : 'green');
+
+                itemDiv.innerHTML = `
+                    <div class="subcat-header-row">
+                        <h4 style="font-size: 1rem;">${item.name} <small style="opacity:0.6">(${item.type})</small></h4>
+                        <div class="subcat-actions" style="display: flex; gap: 10px; align-items: center;">
+                             <span class="btn-delete-item" style="cursor: pointer; font-size: 0.9rem;" title="Eliminar ítem">🗑️</span>
+                             ${item.is_paid ? '✅ Pagado' : '⏳ Pendiente'}
+                        </div>
                     </div>
-                </div>
-                 <div class="subcat-header-row">
-                    <span class="subcat-values" style="font-size: 0.9rem; color: var(--text-main); font-weight: 500;">
-                        $${catData.spent.toLocaleString()} / $${catData.budget.toLocaleString()} ${!isOver ? `(${catPercent.toFixed(1)}%)` : ''}
-                        ${isOver ? '<span class="over-alert small">⚠️</span>' : ''}
-                    </span>
-                </div>
-                <div class="progress-container small">
-                    <div class="progress-bar ${barColor}" style="width: ${Math.min(catPercent, 100)}%"></div>
-                </div>
-                <div class="subcat-footer-row" style="color: ${isOver ? 'var(--danger)' : 'var(--text-muted)'}">
-                     ${isOver ? `Excedido por $${Math.abs(remaining).toLocaleString()}` : `Queda $${remaining.toLocaleString()}`}
-                </div>
-            `;
+                    <div class="subcat-header-row">
+                        <span class="subcat-values" style="font-size: 0.9rem; color: var(--text-main); font-weight: 500;">
+                            $${item.spent.toLocaleString()} / $${item.budget.toLocaleString()}
+                        </span>
+                    </div>
+                    <div class="progress-container small">
+                        <div class="progress-bar ${barColor}" style="width: ${Math.min(itemPercent, 100)}%"></div>
+                    </div>
+                `;
 
-            const delBtn = item.querySelector('.btn-delete-cat');
-            delBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.handleDeleteCategory(sectionName, catName);
+                // Bind delete action
+                itemDiv.querySelector('.btn-delete-item').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.handleDeleteItem(item.id, sec.name);
+                });
+
+                // Bind toggle paid action (existing logic placeholder)
+                /* itemDiv.querySelector('.subcat-actions').addEventListener('click', (e) => {
+                    if (e.target.classList.contains('btn-delete-item')) return;
+                    e.stopPropagation(); 
+                    // toggle logic...
+                }); */
+
+                subList.appendChild(itemDiv);
             });
 
-            const editBtn = item.querySelector('.btn-edit-cat');
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.handleUpdateCategory(sectionName, catName, catData.budget);
-            });
+            // Render Sporadic Items if any
+            if (sec.sporadic_items && sec.sporadic_items.length > 0) {
+                sec.sporadic_items.forEach(exp => {
+                    const row = document.createElement('div');
+                    row.className = 'subcat-item';
+                    row.style.cssText = 'padding: 12px; margin-bottom: 8px; border: 1px solid #f1f5f9; background: #fff; display: flex; justify-content: space-between; align-items: center;';
 
-            subList.appendChild(item);
-        });
+                    row.innerHTML = `
+                        <div style="display: flex; flex-direction: column;">
+                            <h4 style="font-size: 1rem; margin: 0;">${exp.description} <small style="opacity:0.6; font-weight:400;">(Esporádico)</small></h4>
+                            <span style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">${new Date(exp.date).toLocaleDateString()}</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <span style="font-weight: 600; color: var(--text-main);">$${exp.amount.toLocaleString()}</span>
+                            <span class="btn-del-exp" style="cursor: pointer; opacity: 0.7;" title="Borrar">🗑️</span>
+                        </div>
+                    `;
 
-        const addBtn = document.createElement('button');
-        addBtn.className = 'btn-add-cat';
-        addBtn.textContent = '+ Agregar Subcategoría';
-        addBtn.style.cssText = 'width: 100%; padding: 12px; margin-top: 15px; background: #f1f5f9; border: 1px dashed #cbd5e1; border-radius: 8px; color: var(--text-main); font-weight: 500; cursor: pointer;';
-        addBtn.addEventListener('click', () => this.handleAddCategory(sectionName));
-        subList.appendChild(addBtn);
+                    row.querySelector('.btn-del-exp').addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`¿Borrar "${exp.description}" de $${exp.amount.toLocaleString()}?`)) return;
+                        try {
+                            const r = await fetch(`${CONFIG.API_BASE}/expenses/expenses/${exp.id}`, {
+                                method: 'DELETE',
+                                headers: this.getHeaders()
+                            });
+                            if (!r.ok) {
+                                const err = await r.json();
+                                alert(`Error: ${err.detail || 'No se pudo borrar'}`);
+                                return;
+                            }
+                            await this.loadDashboard();
+                            this.showCategoryDetail(sec.name);
+                        } catch (err) {
+                            console.error(err);
+                            alert('Error de conexión al borrar gasto');
+                        }
+                    });
 
-        const delSecBtn = document.createElement('button');
-        delSecBtn.textContent = '⚠️ Eliminar Sección Completa';
-        delSecBtn.style.cssText = 'width: 100%; padding: 10px; margin-top: 20px; background: none; border: 1px solid #fee2e2; border-radius: 8px; color: #ef4444; font-size: 0.8rem; cursor: pointer;';
-        delSecBtn.addEventListener('click', () => this.handleDeleteSection(sectionName));
-        subList.appendChild(delSecBtn);
+                    subList.appendChild(row);
+                });
+            }
 
-        modal.classList.add('active');
-        this.toggleBodyModal(true);
+            const addBtn = document.createElement('button');
+            addBtn.className = 'btn-add-cat';
+            addBtn.textContent = '+ Agregar Ítem (Fijo/Saldo)';
+            addBtn.style.cssText = 'width: 100%; padding: 12px; margin-top: 15px; background: #f1f5f9; border: 1px dashed #cbd5e1; border-radius: 8px; color: var(--text-main); font-weight: 500; cursor: pointer;';
+            addBtn.addEventListener('click', () => this.handleAddCategory(sec.id));
+            subList.appendChild(addBtn);
+
+            const delSecBtn = document.createElement('button');
+            delSecBtn.textContent = '⚠️ Eliminar Carpeta Completa';
+            delSecBtn.style.cssText = 'width: 100%; padding: 10px; margin-top: 20px; background: none; border: 1px solid #fee2e2; border-radius: 8px; color: #ef4444; font-size: 0.8rem; cursor: pointer;';
+            delSecBtn.addEventListener('click', () => this.handleDeleteSection(sec.id));
+            subList.appendChild(delSecBtn);
+
+            modal.classList.add('active');
+            this.toggleBodyModal(true);
+
+        } catch (e) {
+            console.error(e);
+            alert("Error al cargar detalles");
+        }
     }
 
     showStatDetail(type) {
@@ -1036,17 +1117,21 @@ class FinanceApp {
 
         try {
             console.log(`[DEBUG] Deleting expense ${id}...`);
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/${id}`, {
+            // Correct API route based on finance.py backend structure
+            // Use /expenses/${id} directly if router is mounted at /expenses
+            // But we created @router.delete("/expenses/{expense_id}") inside finance.py
+            // So full path is /api/v1/expenses/expenses/${id}
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/expenses/${id}`, {
                 method: 'DELETE',
                 headers: this.getHeaders()
             });
 
             if (response.ok) {
                 console.log('[DEBUG] Expense deleted successfully');
-                this.refreshData();
+                await this.refreshData(); // Ensure we await refresh
             } else {
                 const err = await response.json();
-                alert('Fallo al eliminar: ' + (err.detail || 'Error desconocido'));
+                alert(`❌ Fallo al eliminar: ${err.detail || 'Error desconocido'}`);
             }
         } catch (error) {
             console.error('Error deleting expense:', error);
@@ -1055,72 +1140,61 @@ class FinanceApp {
     }
 
     async handleExpenseSubmit() {
-        console.log('[DEBUG] Starting handleExpenseSubmit v3.0.31');
+        console.log('[DEBUG] Starting handleExpenseSubmit v4.0 (JSON mode)');
         const btn = document.getElementById('btn-submit-expense');
         btn.disabled = true;
         btn.textContent = 'Guardando...';
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
-
         try {
-            console.log('[DEBUG] Preparing FormData...');
-            const formData = new FormData();
-
-            // CRITICAL FIX: Ensure correct IDs are used (expense-amount, expense-desc)
             const amtEl = document.getElementById('expense-amount') || document.getElementById('amount');
             const descEl = document.getElementById('expense-desc') || document.getElementById('concept');
+            const folderEl = document.getElementById('section-select');
+            const itemEl = document.getElementById('category');
 
-            if (!amtEl) throw new Error("Elemento 'monto' no encontrado en el DOM");
+            if (!amtEl || !folderEl) throw new Error("Faltan campos críticos");
 
-            formData.append('amount', amtEl.value);
-            formData.append('concept', descEl ? descEl.value : '');
-            formData.append('section', document.getElementById('section-select').value || '');
-            formData.append('category', document.getElementById('category').value || '');
-            formData.append('payment_method', document.getElementById('payment-method').value);
+            const folderId = parseInt(folderEl.value);
+            const itemId = itemEl.value ? parseInt(itemEl.value) : null;
 
-            const photoEl = document.getElementById('image-upload');
-            const photo = photoEl ? photoEl.files[0] : null;
-            if (photo) formData.append('image', photo);
+            // Determine type automatically based on item selected
+            let type = 'ESPORADICO';
+            if (itemId && this.foldersList) {
+                const folder = this.foldersList.find(f => f.id === folderId);
+                const item = folder?.items.find(i => i.id === itemId);
+                if (item) type = item.type;
+            }
 
-            console.log('[DEBUG] Fetching API POST /expenses/ (with 45s timeout)');
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/`, {
+            const payload = {
+                description: descEl ? descEl.value : 'Sin descripción',
+                amount: parseInt(amtEl.value),
+                folder_id: folderId,
+                item_id: itemId,
+                type: type,
+                date: new Date().toISOString().split('T')[0]
+            };
+
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/expenses`, {
                 method: 'POST',
-                headers: this.getHeaders(),
-                body: formData,
-                signal: controller.signal
+                headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
             });
-            clearTimeout(timeoutId);
-            console.log('[DEBUG] API Response status:', response.status);
 
             if (response.ok) {
-                console.log('[DEBUG] Success! Closing modal');
                 document.getElementById('modal-add').classList.remove('active');
                 this.toggleBodyModal(false);
                 document.getElementById('expense-form').reset();
-                const camBtn = document.getElementById('btn-camera');
-                if (camBtn) camBtn.textContent = '📸 Adjuntar Boleta';
-
-                console.log('[DEBUG] Triggering background refreshData');
-                this.refreshData().catch(e => console.error('Background refresh error:', e));
+                await this.refreshData();
+                alert('✅ Gasto registrado');
             } else {
                 const errJson = await response.json().catch(() => ({}));
-                console.error('[DEBUG] API Failed:', errJson);
                 alert('Fallo al guardar: ' + (errJson.detail || 'Error en el servidor'));
             }
         } catch (error) {
-            clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                console.error('[DEBUG] Fetch Timed Out');
-                alert('La conexión tardó demasiado (Timeout). Revisa tu internet o si el gasto se guardó en el panel.');
-            } else {
-                console.error('[DEBUG] Fatal error in handleExpenseSubmit:', error);
-                alert('Error al procesar el gasto: ' + error.message);
-            }
+            console.error('Submission error:', error);
+            alert('Error: ' + error.message);
         } finally {
-            console.log('[DEBUG] Resetting button state');
             btn.disabled = false;
-            btn.textContent = 'Guardar';
+            btn.textContent = 'Guardar Gasto';
         }
     }
 
@@ -1375,20 +1449,145 @@ class FinanceApp {
         this.openEditModal(section, category, currentBudget);
     }
 
-    async handleDeleteCategory(section, category) {
-        if (!confirm(`¿Estás seguro de ELIMINAR "${category}"?`)) return;
-        console.log(`[ACTION] Delete Category: ${section}/${category}`);
+    async handleAddCategory(folderId) {
+        const name = prompt(`Nueva subcategoría/ítem:`);
+        if (!name) return;
+        const budget = parseInt(prompt("Monto/Presupuesto Mensual:", "0")) || 0;
+        const type = prompt("Tipo (FIJO o CON_SALDO):", "FIJO").toUpperCase();
+
+        if (type !== 'FIJO' && type !== 'CON_SALDO') {
+            alert("Tipo inválido. Debe ser FIJO o CON_SALDO.");
+            return;
+        }
 
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
-                method: 'DELETE',
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/items`, {
+                method: 'POST',
                 headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ section, category })
+                body: JSON.stringify({
+                    folder_id: folderId,
+                    name: name.trim(),
+                    budget: budget,
+                    type: type
+                })
             });
+
             if (response.ok) {
-                alert('🗑️ Categoría eliminada');
-                document.getElementById('modal-detail').classList.remove('active');
-                this.toggleBodyModal(false);
+                alert('✅ Ítem agregado');
+                await this.refreshData();
+                const folder = this.dashboardData.folders.find(f => f.id === folderId);
+                if (folder) this.showCategoryDetail(folder.name);
+            } else {
+                const err = await response.json();
+                alert(`❌ Error: ${err.detail || 'Fallo al agregar'}`);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('⚠️ Error de conexión');
+        }
+    }
+
+    async handleAddSection() {
+        const name = prompt("Nombre Nueva Carpeta (ej: HOGAR):");
+        if (!name) return;
+        const balance = parseInt(prompt("Presupuesto/Saldo Inicial para esta carpeta:", "0")) || 0;
+
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/folders`, {
+                method: 'POST',
+                headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, initial_balance: balance })
+            });
+
+            if (response.ok) {
+                alert('✅ Carpeta creada');
+                await this.refreshData();
+            } else {
+                const err = await response.json();
+                alert(`❌ Error: ${err.detail || 'Fallo al crear'}`);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('⚠️ Error de conexión');
+        }
+    }
+
+    async handleDeleteSection(folderId) {
+        if (!confirm('¿Estás seguro de eliminar esta carpeta completa? Se perderán todos los datos asociados.')) return;
+
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/folders/${folderId}`, {
+                method: 'DELETE',
+                headers: this.getHeaders()
+            });
+
+            if (!response.ok) throw new Error("Error deleting folder");
+
+            this.toggleBodyModal(false);
+            document.getElementById('modal-detail').classList.remove('active');
+            await this.loadDashboard();
+
+        } catch (e) {
+            console.error(e);
+            alert("No se pudo eliminar la carpeta");
+        }
+    }
+
+    async handleDeleteItem(itemId, sectionName) {
+        if (!confirm('¿Eliminar este ítem y todos sus gastos asociados?')) return;
+        try {
+            const res = await fetch(`${CONFIG.API_BASE}/expenses/items/${itemId}`, {
+                method: 'DELETE',
+                headers: this.getHeaders()
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                alert(`Error: ${err.detail || 'No se pudo eliminar el ítem'}`);
+                return;
+            }
+            await this.loadDashboard();
+            this.showCategoryDetail(sectionName);
+        } catch (e) {
+            console.error(e);
+            alert('Error de conexión al eliminar ítem');
+        }
+    }
+
+    async handleDeleteSporadic(folderId, sectionName) {
+        if (!confirm('¿Vaciar todos los gastos esporádicos de esta carpeta? Esta acción no se puede deshacer.')) return;
+        try {
+            const res = await fetch(`${CONFIG.API_BASE}/expenses/folders/${folderId}/sporadic`, {
+                method: 'DELETE',
+                headers: this.getHeaders()
+            });
+            if (!res.ok) throw new Error("Error deleting sporadic");
+            this.showCategoryDetail(sectionName); // Refresh modal
+            this.loadDashboard(); // Refresh background stats
+        } catch (e) {
+            console.error(e);
+            alert("Error al vaciar gastos esporádicos");
+        }
+    }
+
+    async handleDeleteCategory(sectionName, catName) {
+        const folder = (this.dashboardData.folders || []).find(f => f.name === sectionName);
+        if (!folder) return;
+        try {
+            const resDetails = await fetch(`${CONFIG.API_BASE}/expenses/folders/${folder.id}`, { headers: this.getHeaders() });
+            const data = await resDetails.json();
+            const item = (data.items || []).find(i => i.name === catName);
+            if (!item) return;
+
+            if (!confirm(`¿Estás seguro de ELIMINAR "${catName}"?`)) return;
+
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/items/${item.id}`, {
+                method: 'DELETE',
+                headers: this.getHeaders()
+            });
+
+            if (response.ok) {
+                alert('🗑️ Ítem eliminado');
+                this.showCategoryDetail(sectionName);
                 await this.refreshData();
             } else {
                 const err = await response.json();
@@ -1398,53 +1597,6 @@ class FinanceApp {
             console.error(e);
             alert('⚠️ Error de conexión');
         }
-    }
-
-    async handleAddSection() {
-        const name = prompt("Nombre Nueva Sección (ej: HOGAR):");
-        if (!name) return;
-        const subCat = prompt("Nombre Primera Subcategoría (ej: Arriendo):");
-        if (!subCat) return;
-        const budget = parseInt(prompt("Monto Presupuesto para esta subcategoría:", "0")) || 0;
-
-        const sectionName = name.trim().toUpperCase();
-
-        try {
-            const response = await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
-                method: 'POST',
-                headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ section: sectionName, category: subCat.trim(), budget })
-            });
-            if (response.ok) {
-                await this.refreshData();
-                alert(`✅ Sección "${sectionName}" creada con éxito!\n\n` +
-                    `📂 Sección: ${sectionName}\n` +
-                    `📝 Primera categoría: ${subCat}\n` +
-                    `💰 Presupuesto: $${budget.toLocaleString()}`);
-                // Mostrar automáticamente el detalle de la sección creada
-                setTimeout(() => this.showCategoryDetail(sectionName), 300);
-            } else {
-                const err = await response.json();
-                alert(`❌ Error al crear sección: ${err.detail || 'Intenta de nuevo'}`);
-            }
-        } catch (e) {
-            console.error(e);
-            alert('⚠️ Error de conexión');
-        }
-    }
-
-    async handleDeleteSection(sectionName) {
-        if (!confirm(`¿Eliminar Sección "${sectionName}"?`)) return;
-        const subCats = Object.keys(this.sectionsData[sectionName].categories);
-        for (const cat of subCats) {
-            await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
-                method: 'DELETE',
-                headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ section: sectionName, category: cat })
-            });
-        }
-        document.getElementById('modal-detail').classList.remove('active');
-        await this.refreshData();
     }
 
     async handleGmailSync() {

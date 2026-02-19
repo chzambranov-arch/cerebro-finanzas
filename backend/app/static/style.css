@@ -1174,3 +1174,27 @@ input[type="radio"]:checked+.toggle-btn.loan {
         background: var(--primary);
         color: white;
     }
+/* FIJO / SALDO / LIBRE Badges */
+.badge { font-size: 0.65rem; font-weight: 700; padding: 3px 6px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge.fijo { background: #fee2e2; color: #ef4444; }
+.badge.saldo { background: #dcfce7; color: #16a34a; }
+.badge.libre { background: #f1f5f9; color: #64748b; }
+
+.status-ok { font-size: 0.75rem; font-weight: 700; color: #10b981; }
+.status-pending { font-size: 0.75rem; font-weight: 700; color: #f59e0b; }
+.status-remaining { font-size: 0.75rem; font-weight: 700; color: #3b82f6; }
+.status-over { font-size: 0.75rem; font-weight: 700; color: #ef4444; }
+.status-accum { font-size: 0.75rem; font-weight: 700; color: #64748b; }
+.status-ok-sm { font-size: 0.8rem; margin-left: 5px; }
+
+
+.dashboard-header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important; border-bottom: 2px solid #ef4444 !important; }
+
+
+/* REFORZANDO BADGES */
+.badge { display: inline-block !important; padding: 4px 8px !important; border-radius: 6px !important; font-weight: 800 !important; font-size: 10px !important; margin-left: 10px !important; text-transform: uppercase !important; }
+.badge.fijo { background-color: #ef4444 !important; color: white !important; }
+.badge.saldo { background-color: #22c55e !important; color: white !important; }
+.badge.libre { background-color: #94a3b8 !important; color: white !important; }
+.dashboard-header { border-top: 4px solid #ef4444 !important; }
+

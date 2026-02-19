@@ -1,8 +1,10 @@
-// If running on localhost (dev), assume port 8001. 
-// If running in production, point to Cloud Run Backend (Southamerica-East1).
-API_BASE: window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
-    ? `http://${window.location.hostname}:8001/api/v1`
-    : `https://cerebro-backend-bqebicwsq-rj.a.run.app/api/v1`,
+const CONFIG = {
+    // API v2 runs on 8005
+    API_BASE: window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
+        ? `http://127.0.0.1:8005/api/v2/lucio`
+        : `https://cerebro-backend-bqebicwsq-rj.a.run.app/api/v2/lucio`,
+    // N8N Webhook for Lúcio Brain v2 (Fallback)
+    N8N_URL: "http://localhost:5678/webhook/lucio-brain-v2"
 };
 
 class FinanceApp {
@@ -182,19 +184,31 @@ class FinanceApp {
             const remaining = sec.budget - sec.spent;
             const isOver = remaining < 0;
 
-            const barColor = percent >= 90 ? 'red' : (percent >= 70 ? 'orange' : 'green');
             const icon = this.getIconForSection(name);
+
+            // Logic for "Global Section OK" (if all fixed are paid)
+            const hasFixed = Object.values(sec.categories).some(c => c.type === 'FIJO');
+            const allFixedPaid = hasFixed && Object.values(sec.categories).filter(c => c.type === 'FIJO').every(c => c.is_ok);
 
             const card = document.createElement('div');
             card.className = 'category-card';
+            let alertMsg = "";
+            const barColor = percent >= 100 ? 'red' : (percent >= 85 ? 'orange' : 'green');
+
+            if (isOver) {
+                alertMsg = '<span class="over-alert">🚨 ¡EXCEDIDO!</span>';
+            } else if (percent >= 85) {
+                alertMsg = '<span class="over-alert" style="background:#fff7ed; color:#c2410c; border-color:#fdba74;">⚠️ Cerca del límite</span>';
+            }
+
             card.innerHTML = `
                 <div class="cat-header">
                     <span class="cat-icon">${icon}</span>
-                    <span class="cat-title">${name}</span>
+                    <span class="cat-title">${name} ${allFixedPaid ? '<span class="status-ok-sm">✅</span>' : ''}</span>
                 </div>
                 <div class="cat-values">
-                    $${sec.spent.toLocaleString()} / $${sec.budget.toLocaleString()} ${!isOver ? `(${percent.toFixed(1)}%)` : ''}
-                    ${isOver ? '<span class="over-alert">⚠️ Te pasaste!</span>' : ''}
+                    $${sec.spent.toLocaleString()} / $${sec.budget.toLocaleString()} ${percent > 0 ? `(${percent.toFixed(1)}%)` : ''}
+                    ${alertMsg}
                 </div>
                 <div class="progress-container">
                     <div class="progress-bar ${barColor}" style="width: ${Math.min(percent, 100)}%"></div>
@@ -269,25 +283,45 @@ class FinanceApp {
             const isOver = remaining < 0;
             const barColor = catPercent >= 90 ? 'red' : (catPercent >= 70 ? 'orange' : 'green');
 
+            // New logic based on type
+            let typeBadge = `<span class="badge ${catData.type.toLowerCase()}">${catData.type}</span>`;
+            let statusInfo = "";
+            let progressHtml = `
+                <div class="progress-container small">
+                    <div class="progress-bar ${barColor}" style="width: ${Math.min(catPercent, 100)}%"></div>
+                </div>
+            `;
+
+            if (catData.type === 'FIJO') {
+                statusInfo = catData.is_ok ? '<span class="status-ok">✅ PAGADO</span>' : '<span class="status-pending">⏳ PENDIENTE</span>';
+                progressHtml = ""; // Fixed items don't strictly use progress bars like this
+            } else if (catData.type === 'SALDO') {
+                statusInfo = isOver
+                    ? `<span class="status-over">⚠️ Excedido en $${Math.abs(remaining).toLocaleString()}</span>`
+                    : `<span class="status-remaining">Saldo: $${remaining.toLocaleString()}</span>`;
+            } else {
+                statusInfo = `<span class="status-accum">Total: $${catData.spent.toLocaleString()}</span>`;
+                progressHtml = "";
+            }
+
             item.innerHTML = `
                 <div class="subcat-header-row">
-                    <h4>${catName}</h4>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <h4>${catName}</h4>
+                        ${typeBadge}
+                    </div>
                      <button class="btn-delete-cat" data-sec="${sectionName}" data-cat="${catName}" style="background:none; border:none; color:#ef4444; cursor:pointer;" title="Borrar Categoría">
                         🗑️
                     </button>
                 </div>
                  <div class="subcat-header-row">
                     <span class="subcat-values">
-                        $${catData.spent.toLocaleString()} / $${catData.budget.toLocaleString()} ${!isOver ? `(${catPercent.toFixed(1)}%)` : ''}
-                        ${isOver ? '<span class="over-alert small">⚠️</span>' : ''}
+                        $${catData.spent.toLocaleString()} ${catData.budget > 0 ? `/ $${catData.budget.toLocaleString()}` : ''}
+                        ${catData.type !== 'FIJO' && !isOver && catData.budget > 0 ? `(${catPercent.toFixed(1)}%)` : ''}
                     </span>
+                    ${statusInfo}
                 </div>
-                <div class="progress-container small">
-                    <div class="progress-bar ${barColor}" style="width: ${Math.min(catPercent, 100)}%"></div>
-                </div>
-                <div class="subcat-footer-row" style="color: ${isOver ? 'var(--danger)' : 'var(--text-muted)'}">
-                     ${isOver ? `Excedido por $${Math.abs(remaining).toLocaleString()}` : `Queda $${remaining.toLocaleString()}`}
-                </div>
+                ${progressHtml}
             `;
 
             // Delete Listener
@@ -1065,11 +1099,13 @@ class FinanceApp {
         const budgetStr = prompt(`Presupuesto mensual para ${name} (déjalo en 0 si no sabes):`, "0");
         const budget = parseInt(budgetStr) || 0;
 
+        const type = prompt(`Tipo de item (FIJO, SALDO, LIBRE):`, "SALDO") || "SALDO";
+
         try {
             const response = await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ section: section, category: name, budget: budget })
+                body: JSON.stringify({ section: section, category: name, budget: budget, type: type.toUpperCase() })
             });
 
             if (response.ok) {
@@ -1111,61 +1147,130 @@ class FinanceApp {
     async handleAddSection() {
         const name = prompt("Nombre de la Nueva Sección (ej. EDUCACIÓN):");
         if (!name) return;
-        const subCat = prompt(`Agrega la primera subcategoría para ${name} (ej. Mensualidad):`);
-        if (!subCat) return;
 
-        const budgetStr = prompt(`Presupuesto mensual para ${subCat}:`, "0");
+        const budgetStr = prompt(`Presupuesto mensual para la carpeta "${name.toUpperCase()}":`, "0");
         const budget = parseInt(budgetStr) || 0;
 
-        // Backend expects same structure: appends row with Section, Category, Budget
+        const sectionName = name.toUpperCase().trim();
+
         try {
             const response = await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ section: name.toUpperCase(), category: subCat, budget: budget })
+                body: JSON.stringify({ section: sectionName, category: null, budget: budget, type: "SALDO" })
             });
 
             if (response.ok) {
                 alert('Sección creada exitosamente');
                 await this.refreshData();
+                setTimeout(() => this.showCategoryDetail(sectionName), 300);
             } else {
-                alert('Error al crear sección');
+                const errJson = await response.json().catch(() => ({}));
+                alert(`Error al crear sección: ${errJson.detail || 'Fallo en el servidor'}`);
             }
         } catch (e) {
             console.error(e);
+            alert('Error de conexión');
         }
     }
 
     async handleDeleteSection(sectionName) {
-        if (!confirm(`⚠️ ¿ESTÁS SEGURO? \n\nEsto eliminará TODAS las subcategorías de "${sectionName}". \n\nEsta acción no se puede deshacer.`)) return;
+        if (!confirm(`⚠️ ¿ESTÁS SEGURO? \n\nEsto eliminará TODAS las subcategorías y metas de "${sectionName}". \n\nLos gastos antiguos permanecerán sin clasificar.`)) return;
 
-        const secData = this.sectionsData[sectionName];
-        if (!secData) return;
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/expenses/sections/${encodeURIComponent(sectionName)}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' }
+            });
 
-        const subCats = Object.keys(secData.categories);
-        let successCount = 0;
-
-        alert(`Eliminando ${subCats.length} elementos... por favor espera.`);
-
-        for (const cat of subCats) {
-            try {
-                await fetch(`${CONFIG.API_BASE}/expenses/categories/`, {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ section: sectionName, category: cat })
-                });
-                successCount++;
-            } catch (e) {
-                console.error(e);
+            if (response.ok) {
+                alert('Sección eliminada exitosamente');
+                document.getElementById('modal-detail').classList.remove('active');
+                await this.refreshData();
+            } else {
+                const err = await response.json().catch(() => ({}));
+                alert(`Error al eliminar: ${err.detail || 'Fallo en el servidor'}`);
             }
+        } catch (e) {
+            console.error(e);
+            alert('Error de conexión');
         }
+    }
 
-        alert(`Sección eliminada (${successCount}/${subCats.length} items).`);
-        document.getElementById('modal-detail').classList.remove('active');
-        await this.refreshData();
+    // --- Lúcio AI Chat Logic ---
+    async sendMessageToLucio(message) {
+        console.log("Enviando mensaje a Lúcio via n8n:", message);
+
+        try {
+            // Use backend proxy to avoid CORS and handle authentication
+            const url = `${CONFIG.API_BASE}/chat_proxy`.replace(/([^:]\/)\/+/g, "$1");
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Respuesta de Lúcio:", data);
+
+                // Si Lúcio registró algo, refrescamos el dashboard para ver el cambio
+                setTimeout(() => this.refreshData(), 1500);
+
+                return data.reply || data.output || "¡Listo! He procesado tu solicitud.";
+            } else {
+                return "Lo siento, tuve un problema al conectar con mi cerebro. ¿Está n8n activo?";
+            }
+        } catch (error) {
+            console.error("Error conectando con Lúcio:", error);
+            return "Error de conexión con el servidor de IA.";
+        }
     }
 }
 
+// Global Chat Logic (outside FinanceApp class or integrated as you wish)
+const setupLucioChatUI = () => {
+    const chatInput = document.getElementById('chat-input-field');
+    const chatSend = document.getElementById('chat-send-btn');
+    const chatMessages = document.getElementById('chat-messages-container');
+
+    if (!chatInput || !chatSend) return;
+
+    const addMessage = (text, role) => {
+        const msg = document.createElement('div');
+        msg.className = `chat-bubble ${role}`;
+        msg.textContent = text;
+        chatMessages.appendChild(msg);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    };
+
+    chatSend.addEventListener('click', async () => {
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        chatInput.value = '';
+        addMessage(text, 'user');
+
+        // Add loading bubble
+        const loadingBubble = document.createElement('div');
+        loadingBubble.className = 'chat-bubble lucio loading';
+        loadingBubble.textContent = 'Lúcio está pensando...';
+        chatMessages.appendChild(loadingBubble);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        const reply = await window.app.sendMessageToLucio(text);
+
+        // Remove loading bubble
+        chatMessages.removeChild(loadingBubble);
+        addMessage(reply, 'lucio');
+    });
+
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') chatSend.click();
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new FinanceApp();
+    setupLucioChatUI();
 });

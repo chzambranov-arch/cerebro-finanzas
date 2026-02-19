@@ -20,7 +20,7 @@
             width: 100%;
             height: 100%;
             background-color: var(--bg-light, #f8fafc);
-            z-index: 9999 !important;
+            z-index: 100001 !important;
             align-items: center;
             justify-content: center;
         }
@@ -60,8 +60,8 @@
                     <label for="login-remember">Recordar contraseña</label>
                 </div>
                 <div id="login-error" class="error-text"></div>
-                <button type="button" class="btn-submit" id="btn-login"
-                    onclick="financeApp.handleLogin()">Entrar</button>
+                <button type="submit" class="btn-submit" id="btn-login"
+                    style="position: relative; z-index: 100002; pointer-events: auto;">Entrar</button>
                 <p class="login-footer">¿No puedes entrar? Contacta a Soporte Antigravity</p>
             </form>
         </div>
@@ -503,12 +503,17 @@
                 <span class="label">Más</span>
             </button>
         </nav>
+
+        <!-- Floating Action Button -->
+        <button class="fab" id="fab-add">
+            <span class="icon">+</span>
+            <span class="label">Agregar Gasto</span>
+        </button>
     </div>
     <link rel="stylesheet" href="/static/chat.css?v=1.1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/app.js?v=4.0.6"></script>
+    <script src="/static/app.js?v=4.0.7"></script>
     <script src="/static/chat.js?v=1.1"></script>
-    </script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {

@@ -1,1 +1,1 @@
-from . import auth, users, finance, commitments, setup
+from . import auth, users, finance

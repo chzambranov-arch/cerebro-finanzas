@@ -1,8 +1,15 @@
+/* Hide the old green FAB button */
+#fab-add {
+    display: none !important;
+}
+
 .fab-ai {
     bottom: 90px;
     background: #3b82f6;
     /* Blue for AI */
     box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
+    z-index: 901;
+    /* Above main FAB */
 }
 
 .chat-overlay {

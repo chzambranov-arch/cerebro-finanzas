@@ -6,52 +6,50 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.core.config import settings
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, users, finance, commitments, setup, agent, webhooks
-from app.models.finance import Expense, Commitment, PendingExpense  # Import to register with Base
-from app.models.budget import Budget, Category, AppConfig  # Import budget models
+from fastapi.responses import FileResponse
+from app.models.user import User, Role
+from app.routers import auth, users, finance, lucio_hybrid
+from app.models.finance import Folder, Item, Expense, ChatHistory
+from app.core.security import get_password_hash
 
-# Create tables on startup (simple for MVP)
+# Create tables on startup
 Base.metadata.create_all(bind=engine)
-
-def init_user():
-    from app.database import SessionLocal
-    from app.models.models import User, Role
-    from app.core.security import get_password_hash
-    db = SessionLocal()
-    try:
-        chr_email = "christian.zv@cerebro.com"
-        christian = db.query(User).filter(User.email == chr_email).first()
-        hashed_pwd = get_password_hash("123456")
-        
-        if not christian:
-            print(f"Creating user {chr_email}...")
-            christian = User(
-                email=chr_email,
-                tecnico_nombre="Christian ZV",
-                hashed_password=hashed_pwd,
-                role=Role.ADMIN,
-                is_active=True
-            )
-            db.add(christian)
-        else:
-            print(f"Updating password for {chr_email}...")
-            christian.hashed_password = hashed_pwd
-            christian.is_active = True
-        
-        db.commit()
-    except Exception as e:
-        print(f"Error initializing user: {e}")
-    finally:
-        db.close()
-
-init_user()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+@app.on_event("startup")
+def init_data():
+    db = SessionLocal()
+    try:
+        print("Initializing system data...")
+        # Add/Update test user
+        user = db.query(User).filter(User.email == "christian.zv@cerebro.com").first()
+        if not user:
+            print("Creating user christian.zv@cerebro.com...")
+            user = User(
+                email="christian.zv@cerebro.com",
+                hashed_password=get_password_hash("cerebro_pass"),
+                tecnico_nombre="Christian ZV",
+                is_active=True,
+                role=Role.TECH
+            )
+            db.add(user)
+        else:
+            print("Updating password for christian.zv@cerebro.com...")
+            user.hashed_password = get_password_hash("cerebro_pass")
+            user.is_active = True
+        db.commit()
+    except Exception as e:
+        print(f"Error initializing user: {e}")
+    finally:
+        db.close()
+    
+    print("--- LÚCIO v3.0 ENGINE READY ---")
 
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
@@ -62,57 +60,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ... (omitted) ...
+# Serve Static Files (Frontend) using absolute path to be safe
+base_dir = os.path.dirname(os.path.abspath(__file__))
+static_dir = os.path.join(base_dir, "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(finance.router, prefix=f"{settings.API_V1_STR}/expenses", tags=["finance"])
-app.include_router(commitments.router, prefix=f"{settings.API_V1_STR}/commitments", tags=["commitments"])
-app.include_router(setup.router, prefix=f"{settings.API_V1_STR}/setup", tags=["setup"])
-app.include_router(agent.router, prefix=f"{settings.API_V1_STR}/agent", tags=["agent"])
-app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
 
-from fastapi.responses import FileResponse
-
-# Serve Static Files (Frontend) using absolute path to be safe in Docker
-# "app/static" relative to where uvicorn is run (usually /app)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# NEW: Architectural v4.0 routes
+app.include_router(finance.router, prefix="/api/v3/finance", tags=["finance_v3"])
+app.include_router(lucio_hybrid.router)  # /api/v3/lucio
 
 @app.get("/debug-deploy")
 def debug_deploy():
-    import os
     return {
-        "version": "v4.0.0-GoogleCloud",
+        "version": "v3.0.0-ManualFolders",
         "cwd": os.getcwd(),
-        "files_in_static": os.listdir("app/static") if os.path.exists("app/static") else "not found",
-        "env_check": "GCP" if "K_SERVICE" in os.environ else ("RAILWAY" if "RAILWAY_STATIC_URL" in os.environ else "LOCAL"),
-        "database": "PostgreSQL" if os.getenv("DATABASE_URL", "").startswith("postgresql") else "SQLite"
+        "files_in_static": os.listdir(static_dir) if os.path.exists(static_dir) else "not found",
+        "env_check": "LOCAL",
+        "database": "SQLite"
     }
 
 @app.get("/")
 def read_root():
-    return FileResponse("app/static/index.html")
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 @app.get("/index.html")
 def read_index_html():
-    return FileResponse("app/static/index.html")
-
-@app.get("/analytics")
-def read_analytics():
-    return FileResponse("app/static/analytics.html")
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 @app.get("/manifest.json")
 def get_manifest():
-    return FileResponse("app/static/manifest.json")
+    return FileResponse(os.path.join(static_dir, "manifest.json"))
 
 @app.get("/sw.js")
 def get_sw():
-    return FileResponse("app/static/sw.js")
+    return FileResponse(os.path.join(static_dir, "sw.js"))
 
 @app.get("/icon-512.png")
 def get_icon():
-    return FileResponse("app/static/icon-512.png")
-
-
-
-print("--- STARTING CEREBRO v4.0 GOOGLE CLOUD ---")
+    return FileResponse(os.path.join(static_dir, "icon-512.png"))

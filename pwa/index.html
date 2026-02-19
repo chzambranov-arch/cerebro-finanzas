@@ -117,6 +117,27 @@
             </div>
         </section>
 
+        <section id="view-chat" class="view">
+            <header class="dashboard-header">
+                <h1>Lúcio AI v3.0 🤖</h1>
+                <p style="color: var(--text-muted); font-size: 0.85rem;">Items: Fijo, Saldo y Libre</p>
+            </header>
+            <main class="chat-main">
+                <div id="chat-messages-container" class="chat-messages">
+                    <div class="chat-bubble lucio">
+                        ¡Hola! Soy Lúcio v3.0. Mi lógica de Items (Fijo/Saldo/Libre) está activa.
+                        ¿Qué quieres registrar hoy?
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input-field" placeholder="Escribe a Lúcio..." autocomplete="off">
+                    <button id="chat-send-btn">
+                        <img src="https://img.icons8.com/material-rounded/24/ffffff/sent.png" alt="Send">
+                    </button>
+                </div>
+            </main>
+        </section>
+
         <section id="view-mas" class="view">
             <header class="dashboard-header">
                 <h1>Más ⚙️</h1>
@@ -275,6 +296,10 @@
                 <img src="https://img.icons8.com/material-rounded/24/94a3b8/handshake.png" alt="Compromisos"
                     class="nav-icon">
                 <span class="label">Compromisos</span>
+            </button>
+            <button class="nav-item" data-view="chat">
+                <img src="https://img.icons8.com/material-rounded/24/94a3b8/robot-tatu.png" alt="Chat" class="nav-icon">
+                <span class="label">Lúcio AI</span>
             </button>
             <button class="nav-item" data-view="mas">
                 <img src="https://img.icons8.com/material-rounded/24/94a3b8/menu.png" alt="Más" class="nav-icon">
