@@ -10,7 +10,7 @@ from app.database import engine, Base, SessionLocal
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.models.user import User, Role
-from app.routers import auth, users, finance, lucio_hybrid
+from app.routers import auth, users, finance, lucio_hybrid, commitments
 from app.models.finance import Folder, Item, Expense, ChatHistory
 from app.core.security import get_password_hash
 
@@ -72,6 +72,7 @@ app.include_router(finance.router, prefix=f"{settings.API_V1_STR}/expenses", tag
 # NEW: Architectural v4.0 routes
 app.include_router(finance.router, prefix="/api/v3/finance", tags=["finance_v3"])
 app.include_router(lucio_hybrid.router)  # /api/v3/lucio
+app.include_router(commitments.router, prefix="/api/v3/commitments", tags=["commitments"])
 
 @app.get("/debug-deploy")
 def debug_deploy():

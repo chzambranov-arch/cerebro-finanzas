@@ -55,3 +55,17 @@ class ChatHistory(Base):
     role = Column(String, nullable=False) # "user" or "assistant"
     message = Column(String, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+class Commitment(Base):
+    __tablename__ = "commitments"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, default=1)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    type = Column(String, nullable=False) # 'DEBT', 'LOAN'
+    total_amount = Column(Float, nullable=False)
+    paid_amount = Column(Float, default=0)
+    due_date = Column(Date, nullable=True)
+    status = Column(String, default="PENDING")
+    created_at = Column(DateTime, default=datetime.utcnow)
+

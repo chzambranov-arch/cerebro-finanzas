@@ -1203,16 +1203,20 @@ class FinanceApp {
         if (!list) return;
         list.innerHTML = '<p class="placeholder-text">Cargando...</p>';
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/commitments/`, {
+            const response = await fetch(`/api/v3/commitments/`, {
                 headers: this.getHeaders()
             });
             if (response.ok) {
                 const data = await response.json();
                 this.commitments = data;
                 this.renderCompromisos(data, this.commitmentPage);
+            } else {
+                console.error('[COMMITMENTS] Error response:', response.status);
+                list.innerHTML = '<p class="placeholder-text">Error al cargar compromisos (' + response.status + ')</p>';
             }
         } catch (error) {
-            console.error(error);
+            console.error('[COMMITMENTS] Network error:', error);
+            list.innerHTML = '<p class="placeholder-text">Error de conexión</p>';
         }
     }
 
@@ -1271,11 +1275,14 @@ class FinanceApp {
             const dateObj = c.created_at ? new Date(c.created_at) : new Date();
             const dateStr = `${dateObj.getDate().toString().padStart(2, '0')}/${(dateObj.getMonth() + 1).toString().padStart(2, '0')}`;
 
+            const descHtml = c.description ? `<span style="display:block; font-size: 0.75rem; color: #9ca3af; font-weight: 400; margin-top: 2px;">${c.description}</span>` : '';
+
             item.innerHTML = `
                 <div class="commitment-icon">${c.type === 'DEBT' ? '🔴' : '🟢'}</div>
                 <div class="commitment-details">
                     <div class="commitment-title" style="${isPaid ? 'text-decoration: line-through;' : ''}">
                         ${c.title} <small style="display:block; font-size: 0.75rem; color: var(--text-muted);">${dateStr}</small>
+                        ${descHtml}
                     </div>
                     <div class="commitment-amount">$${c.total_amount.toLocaleString()}</div>
                 </div>
@@ -1296,7 +1303,7 @@ class FinanceApp {
     async toggleCommitmentStatus(commitment) {
         const newStatus = commitment.status === 'PENDING' ? 'PAID' : 'PENDING';
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/commitments/${commitment.id}`, {
+            const response = await fetch(`/api/v3/commitments/${commitment.id}`, {
                 method: 'PATCH',
                 headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus, paid_amount: newStatus === 'PAID' ? commitment.total_amount : 0 })
@@ -1314,8 +1321,11 @@ class FinanceApp {
             return;
         }
 
+        const descVal = document.getElementById('comm-description') ? document.getElementById('comm-description').value : null;
+
         const payload = {
             title: titleVal,
+            description: descVal || null,
             type: document.querySelector('input[name="comm-type"]:checked').value,
             total_amount: parseInt(amountVal),
             due_date: document.getElementById('comm-date').value || null,
@@ -1323,7 +1333,7 @@ class FinanceApp {
         };
 
         try {
-            const response = await fetch(`${CONFIG.API_BASE}/commitments/`, {
+            const response = await fetch(`/api/v3/commitments/`, {
                 method: 'POST',
                 headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional, Dict, Any
 import os
 from app.database import get_db
@@ -137,6 +138,80 @@ async def execute_n8n_action(
     resultado = await N8NService.ejecutar_accion_n8n(action_data)
     
     return resultado
+
+# --- REPORTING (for n8n AI) ---
+
+@router.get("/report")
+def get_finance_report(
+    user_id: int,
+    tipo_reporte: str,
+    carpeta: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate financial reports for n8n AI.
+    Types: HISTORIAL_GASTOS, RESUMEN_CARPETA
+    """
+    if tipo_reporte == "HISTORIAL_GASTOS":
+        query = db.query(ExpenseModel).filter(ExpenseModel.user_id == user_id)
+        
+        if carpeta:
+            # Join with Folder to filter by name
+            folder = db.query(FolderModel).filter(FolderModel.user_id == user_id, FolderModel.name == carpeta).first()
+            if folder:
+                 query = query.filter(ExpenseModel.folder_id == folder.id)
+            else:
+                 return {"status": "success", "resumen": f"Carpeta '{carpeta}' no encontrada", "datos": []}
+            
+        # Get last 5
+        expenses = query.order_by(ExpenseModel.date.desc(), ExpenseModel.id.desc()).limit(5).all()
+        
+        data = []
+        for e in expenses:
+            data.append({
+                "id": e.id,
+                "amount": e.amount,
+                "description": e.description,
+                "date": e.date,
+                "folder_id": e.folder_id
+            })
+            
+        return {
+            "status": "success",
+            "resumen": f"Últimos {len(data)} gastos registrados" + (f" en carpeta '{carpeta}'" if carpeta else ""),
+            "datos": data
+        }
+
+    elif tipo_reporte == "RESUMEN_CARPETA":
+        if not carpeta:
+             return {"status": "error", "message": "Parámetro 'carpeta' requerido para RESUMEN_CARPETA"}
+             
+        # Find folder by name for this user
+        folder = db.query(FolderModel).filter(FolderModel.user_id == user_id, FolderModel.name == carpeta).first()
+        if not folder:
+            return {"status": "error", "message": f"Carpeta '{carpeta}' no encontrada"}
+            
+        # Calculate stats
+        total_budget = 0
+        for item in folder.items:
+            total_budget += item.budget
+            
+        # Total spent in folder
+        total_spent = db.query(func.sum(ExpenseModel.amount)).filter(ExpenseModel.folder_id == folder.id).scalar() or 0
+        
+        return {
+            "status": "success",
+            "resumen": f"Resumen de carpeta '{carpeta}'",
+            "datos": {
+                "carpeta": carpeta,
+                "presupuesto_total": total_budget,
+                "gasto_total": total_spent,
+                "disponible": total_budget - total_spent
+            }
+        }
+        
+    else:
+        return {"status": "error", "message": f"Tipo de reporte '{tipo_reporte}' no soportado"}
 
 # --- FOLDERS ---
 
